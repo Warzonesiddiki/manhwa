@@ -69,4 +69,20 @@ describe('ExportModal hook integrity (F06 regression)', () => {
     ).not.toThrow();
     expect(screen.getByText(/Export Dubbed Production Package/i)).toBeTruthy();
   });
+
+  it('displays explicit notice that original English audio is completely replaced', () => {
+    render(<ExportModal isOpen={true} onClose={() => {}} arc={arc} project={project} />);
+    expect(screen.getByText(/Original English audio completely replaced/i)).toBeTruthy();
+  });
+
+  it('renders correctly when project has an uploaded original video', () => {
+    const projectWithUpload: MarathonProject = {
+      ...project,
+      uploadedVideoUrl: '/uploads/orig_test.mp4',
+      uploadedVideoFilename: 'orig_test.mp4',
+    };
+    render(<ExportModal isOpen={true} onClose={() => {}} arc={arc} project={projectWithUpload} />);
+    expect(screen.getByText(/Download Studio Dubbed Video/i)).toBeTruthy();
+    expect(screen.getByText(/Original English audio completely replaced/i)).toBeTruthy();
+  });
 });

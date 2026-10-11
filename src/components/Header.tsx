@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Sparkles, Layers, Download, Plus } from 'lucide-react';
+import { Play, Sparkles, Layers, Download, Plus, Check, RefreshCw, AlertCircle, Save } from 'lucide-react';
 
 interface HeaderProps {
   onOpenIngest: () => void;
@@ -8,6 +8,9 @@ interface HeaderProps {
   setActiveView: (view: 'auto_dub' | 'dubbing' | 'creator' | 'arcs' | 'subtitles' | 'batch') => void;
   completedArcsCount: number;
   totalArcsCount: number;
+  saveStatus?: 'saved' | 'saving' | 'conflict' | 'error' | 'unsaved';
+  revision?: number;
+  onManualSave?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,6 +20,9 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveView,
   completedArcsCount,
   totalArcsCount,
+  saveStatus = 'saved',
+  revision = 1,
+  onManualSave,
 }) => {
   return (
     <header className="flex items-center justify-between gap-8 px-6 py-3.5 bg-slate-950 border-b border-slate-800/80 sticky top-0 z-40 backdrop-blur-md">
@@ -102,8 +108,55 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
       </nav>
 
-      {/* Zone 3: Action Buttons */}
+      {/* Zone 3: Action Buttons & Autosave Status */}
       <div className="flex items-center gap-3 shrink-0">
+        {/* Autosave Status Pill */}
+        {saveStatus === 'saved' && (
+          <span
+            className="hidden lg:flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg"
+            title={`Project changes saved on server (revision ${revision})`}
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Saved (rev-{revision})</span>
+          </span>
+        )}
+        {saveStatus === 'saving' && (
+          <span className="hidden lg:flex items-center gap-1.5 text-[11px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            <span>Saving...</span>
+          </span>
+        )}
+        {saveStatus === 'conflict' && (
+          <button
+            onClick={onManualSave}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-rose-300 bg-rose-500/20 border border-rose-500/40 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-rose-500/30"
+            title="Concurrent modification on server. Click to resolve."
+          >
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+            <span>Conflict (Click to resolve)</span>
+          </button>
+        )}
+        {saveStatus === 'error' && (
+          <button
+            onClick={onManualSave}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-rose-300 bg-rose-500/20 border border-rose-500/40 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-rose-500/30"
+            title="Autosave failed. Click to retry."
+          >
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+            <span>Retry Save</span>
+          </button>
+        )}
+        {onManualSave && saveStatus !== 'conflict' && (
+          <button
+            onClick={onManualSave}
+            disabled={saveStatus === 'saving'}
+            className="p-1.5 text-xs text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors cursor-pointer"
+            title="Save Project to Server (Durable Storage)"
+          >
+            <Save className="w-4 h-4 text-amber-400" />
+          </button>
+        )}
+
         <button
           onClick={onOpenIngest}
           className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"

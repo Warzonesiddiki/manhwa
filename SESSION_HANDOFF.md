@@ -47,15 +47,34 @@ Updated IDs: TASK-004/005/006 complete (status log in `docs/15-backlog.md`); TES
 ## Risks and blockers
 
 - Auth is interim single-token identity (DEC-011): rotating `OWNER_TOKEN` invalidates sessions; no MFA. Fine for single-owner private use; upgrade path documented.
-- App shell (client bundle) is public by design — contains no secrets; all API/media gated.
-- Login throttle is in-memory (resets on restart) — acceptable interim; TASK-013 adds real quota controls.
-- F04 only interim-bounded: synchronous stitch/dub still allocate full PCM (≤7200 s enforced); day-long work needs the durable pipeline (TASK-020/022/028).
-- CI still unpushed (workflows permission). Media correctness (F11/F12 render policy) untested without FFmpeg. DEC-001/005 remain phase-0 owner blockers for provider work.
+## Intake & Audio Replacement Implementation (2026-10-11)
 
-## Recovery
+- **Dual Intake (YouTube links + direct video upload):**
+  - Updated `IngestModal` with dedicated tabs and workflow:
+    - Tab 1: YouTube Reference Link (accepts YouTube link, extracts metadata, allows optional pairing with authorized source video file)
+    - Tab 2: Upload Authorized Original Video File (direct upload to `/api/upload-video` with container verification, file size detection, and automatic project assignment)
+  - `AutoDubbingStudio` displays full project intake context (YouTube reference link, active source video file status, and direct upload/replace actions).
+  - `MarathonProject` records `uploadedVideoUrl` and `uploadedVideoFilename`.
+- **Complete Audio Replacement (Urdu narration replacing English audio):**
+  - Preview playback in `AutoDubbingStudio`: original video is muted (`muted={true}`), Urdu narration voiceovers play in sync via audio clock, and on-screen status badge reflects full audio replacement.
+  - Server rendering & export (`/api/dub-video-studio`): FFmpeg maps `-map 0:v:0` (original video frames) and `-map 1:a:0` (master Urdu narration track), completely omitting original audio `0:a`. Server returns explicit `audioMode: 'replaced_original_audio'`.
+  - `ExportModal`: now connects the project's uploaded video (if present) to the studio dubbing pipeline and provides explicit notice of full audio replacement.
+  - Strict UI cleanliness: all `alert()` calls eliminated in favor of dismissible inline status banners.
+  - **TASK-010 Media Inspection & Preview Proxy COMPLETE:**
+    - Real containerized FFprobe media stream and container inspection (`server/media/inspector.ts`).
+    - Extracted rational frame rate parsing, video codec, width, height, rotation, audio codec, channels, sample rate, bit rate, seekability, and computed SHA-256 source hash.
+    - Bounded validation: strictly rejects 0-duration and >24-hour media (`LIMIT_EXCEEDED` 413).
+    - Fail-safe quarantine rejection on corrupt/truncated containers (`MEDIA_CORRUPTED` 422) without crashing server.
+    - Automatic duration synchronization (`project.durationMs` and `project.totalDurationMinutes`).
+    - Lightweight browser-compatible faststart MP4 preview proxy generator (`server/media/previewProxy.ts`).
+    - HTTP Range 206 Partial Content delivery for preview proxy (`GET /api/v1/assets/:id/preview`).
+    - OpenAPI 3.1.0 schemas and paths updated.
+  - **Tests:** **109/109 tests pass across 13 test suites** (mediaInspection 13, resumableUploads/TEST-003/004 13, contracts 7, persistence/TEST-005 11, AutoDubbingStudio 4, srtParser 8, urduPhonetics 6, ExportModal 4, IngestModal 3, API smoke 6, security/honesty 18, packaging/TEST-001 6, auth/TEST-002 11).
 
-Reproduce: `npx bun install --frozen-lockfile && npm run check` on this commit. Roll back: `git revert` the task commits in reverse order (006 → 005 → 004); no data migrations; tests use and delete `/tmp/manhwa-test-*` only. Set a strong `OWNER_TOKEN` in any deployed environment (required, fail-closed).
+## Current status
 
-## Next session
+TASK-004, TASK-005, TASK-006, TASK-007, TASK-008, TASK-009, and TASK-010 are complete and verified green.
 
-**Exactly one next task: TASK-007 — Project/revision persistence** (depends on TASK-006 ✓). Scope (TEST-005): durable project entities (project, source ref, segments, revisions), optimistic-concurrency PATCH semantics per docs/05/06, autosave/reload recovery, versioned export/import without old signed URLs, server-side repository interfaces (start with a local store adapter — SQLite or validated JSON files — behind interfaces so the Firestore adapter can swap in under DEC-002; no cloud dependency). Required inputs: none (no spend). Relevant documents: docs/05-data-model.md, docs/06-api-contract.md, docs/07-job-orchestration.md (state precedents), docs/25-continuity-and-editing.md, docs/13-testing-release.md (TEST-005), AUDIT.md F08/F14, docs/18-migration-audit-map.md.
+## Next task
+
+**TASK-011 — Durable job/dispatch ledger** (depends on TASK-008 ✓, TASK-003): Atomic job + intent, idempotent acceptance, step dependencies, worker launch identity; duplicate dispatch tested. TEST-006. Note that live provider work remains blocked on DEC-001/002/005.

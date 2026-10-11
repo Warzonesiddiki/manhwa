@@ -18,8 +18,11 @@ import {
   ArrowRight,
   Clock,
   Layers,
+  Youtube,
+  Film,
+  AlertCircle,
 } from 'lucide-react';
-import { StoryArc, RecapSegment, GeminiVoiceName } from '../types';
+import { StoryArc, RecapSegment, GeminiVoiceName, MarathonProject } from '../types';
 import {
   formatTimeDisplay,
   downloadFile,
@@ -36,6 +39,8 @@ import { GEMINI_VOICES } from '../data/presetProjects';
 interface AutoDubbingStudioProps {
   arc: StoryArc;
   allArcs: StoryArc[];
+  project?: MarathonProject;
+  onUpdateProject?: (p: MarathonProject) => void;
   onSelectArc: (arcId: string) => void;
   selectedVoice: GeminiVoiceName;
   onSelectVoice: (v: GeminiVoiceName) => void;
@@ -45,6 +50,8 @@ interface AutoDubbingStudioProps {
 export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
   arc,
   allArcs,
+  project,
+  onUpdateProject,
   onSelectArc,
   selectedVoice,
   onSelectVoice,
@@ -55,12 +62,17 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
   const [dubVolume, setDubVolume] = useState(1.0);
   const [bgmVolume, setBgmVolume] = useState(0.2);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
-  const [videoSourceType, setVideoSourceType] = useState<'sample_original' | 'uploaded' | 'animated_canvas'>('sample_original');
-  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
+  const [videoSourceType, setVideoSourceType] = useState<'sample_original' | 'uploaded' | 'animated_canvas'>(
+    project?.uploadedVideoUrl ? 'uploaded' : 'sample_original'
+  );
+  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(
+    project?.uploadedVideoUrl || null
+  );
 
   // Studio FFmpeg Dubbing state
   const [isDubbingStudio, setIsDubbingStudio] = useState(false);
   const [studioDubbedVideoUrl, setStudioDubbedVideoUrl] = useState<string | null>(null);
+  const [studioError, setStudioError] = useState<string | null>(null);
 
   // Dubbing pipeline states
   const [isDubbing, setIsDubbing] = useState(false);
@@ -120,7 +132,14 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
 
     return () => {
       if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
+        try {
+          const p = audioContextRef.current.close();
+          if (p && typeof p.catch === 'function') {
+            p.catch(() => {});
+          }
+        } catch {
+          // ignore
+        }
         audioContextRef.current = null;
       }
     };
@@ -417,9 +436,9 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
         const audioBlob = await fetch(res.masterAudioUrl).then((r) => r.blob());
         downloadFile(audioBlob, `${arc.title.replace(/[^a-zA-Z0-9]/g, '_')}_Master_Urdu_Dub.wav`, 'audio/wav');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Audio stitch error:', err);
-      alert('Could not stitch master audio track. Please check segments.');
+      setStudioError('Could not stitch master audio track: ' + (err?.message || 'Please check segments.'));
     } finally {
       setIsStitchingAudio(false);
     }
@@ -576,7 +595,7 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
       document.body.removeChild(link);
     } catch (err: any) {
       console.error('Studio dubbing error:', err);
-      alert(`Studio dubbing error: ${err.message || 'Failed to merge video and audio'}`);
+      setStudioError(`Studio dubbing notice: ${err.message || 'Failed to merge video and audio'}`);
       setIsDubbingStudio(false);
     }
   };
@@ -590,6 +609,13 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
         setUploadedVideoUrl(res.videoUrl);
         setVideoSourceType('uploaded');
         setDubStatusText(`Uploaded "${file.name}"! Ready to dub.`);
+        if (onUpdateProject && project) {
+          onUpdateProject({
+            ...project,
+            uploadedVideoUrl: res.videoUrl,
+            uploadedVideoFilename: res.filename,
+          });
+        }
       } catch (err) {
         console.warn('Fallback to local object URL:', err);
         const url = URL.createObjectURL(file);
@@ -603,6 +629,22 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
     <div className="space-y-6">
       {/* Hidden Audio Element playing Urdu narration */}
       <audio ref={dubAudioRef} preload="auto" />
+
+      {/* Dismissible Error / Notice Banner */}
+      {studioError && (
+        <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex items-center justify-between text-xs text-rose-300">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{studioError}</span>
+          </div>
+          <button
+            onClick={() => setStudioError(null)}
+            className="text-rose-400 hover:text-white font-bold ml-4 cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Top Headline Banner */}
       <div className="bg-gradient-to-r from-slate-900 via-amber-950/20 to-slate-900 border border-amber-500/30 rounded-2xl p-6 shadow-2xl">
@@ -671,6 +713,65 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Intake & Audio Replacement Status Strip */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* YouTube Reference Link Card */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center flex-shrink-0">
+              <Youtube className="w-4 h-4 text-rose-500" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">YouTube Reference</span>
+              <span className="text-slate-200 font-medium truncate block max-w-[200px]" title={project?.sourceVideoUrl || 'No YouTube link'}>
+                {project?.sourceVideoUrl || 'YouTube reference link'}
+              </span>
+            </div>
+          </div>
+          {project?.sourceVideoUrl && (
+            <a
+              href={project.sourceVideoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-amber-400 hover:underline flex-shrink-0 ml-2"
+            >
+              Open Link
+            </a>
+          )}
+        </div>
+
+        {/* Source Media Card */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+              <Film className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Original Source Media</span>
+              <span className="text-slate-200 font-medium truncate block max-w-[200px]" title={uploadedVideoUrl ? (project?.uploadedVideoFilename || 'Uploaded Video') : 'Sample Manhwa Original Video'}>
+                {uploadedVideoUrl ? (project?.uploadedVideoFilename || 'Uploaded Video') : 'Sample Manhwa Original Video'}
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex-shrink-0">
+            {videoSourceType === 'uploaded' && uploadedVideoUrl ? 'Custom Video' : 'Built-in 105s'}
+          </span>
+        </div>
+
+        {/* Audio Replacement Card */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center gap-2.5 text-xs">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
+            <Volume2 className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="min-w-0">
+            <span className="text-[10px] uppercase font-bold text-amber-400 block tracking-wider">Audio Replacement</span>
+            <span className="text-slate-200 font-medium text-[11px] leading-tight block">
+              100% Spoken Urdu Narration (Original English audio completely replaced)
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Main Studio View: Video on Left, Arc Controls & Settings on Right */}
@@ -754,10 +855,10 @@ export const AutoDubbingStudio: React.FC<AutoDubbingStudioProps> = ({
                   className="w-full h-full object-cover"
                 />
 
-                {/* Badge showing English audio is muted in favor of Urdu */}
-                <div className="absolute top-3 left-3 bg-slate-950/85 backdrop-blur-md border border-amber-500/30 rounded-lg px-2.5 py-1 text-[11px] text-amber-300 font-medium z-10 flex items-center gap-1.5">
+                {/* Badge showing English audio is completely replaced by Urdu */}
+                <div className="absolute top-3 left-3 bg-slate-950/90 backdrop-blur-md border border-amber-500/40 rounded-lg px-2.5 py-1 text-[11px] text-amber-300 font-medium z-10 flex items-center gap-1.5 shadow-lg">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>{videoSourceType === 'uploaded' ? 'Uploaded Video Active' : 'Original Video Active'} · Spoken Urdu Dub Synced</span>
+                  <span>{videoSourceType === 'uploaded' ? 'Uploaded Original Video' : 'Original Video'} · 100% Spoken Urdu Narration (English Audio Completely Replaced)</span>
                 </div>
 
                 {/* On-Screen Nastaliq Urdu Subtitles Card */}

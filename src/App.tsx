@@ -60,10 +60,135 @@ export default function App() {
     };
   }, []);
 
+  // Autosave and persistence state (TASK-007, TEST-005, AUDIT F14)
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'conflict' | 'error' | 'unsaved'>('saved');
+  const [isInitialLoadDone, setIsInitialLoadDone] = useState<boolean>(false);
+
   const showStatus = (msg: string) => {
     setStatusMessage(msg);
     setTimeout(() => setStatusMessage(null), 4000);
   };
+
+  const saveProjectToServer = async (projToSave: MarathonProject) => {
+    try {
+      setSaveStatus('saving');
+      const currentRev = projToSave.revision || 1;
+      const res = await fetch(`/api/v1/projects/${projToSave.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'If-Match': `rev-${currentRev}`,
+        },
+        body: JSON.stringify({
+          project: projToSave,
+          expectedRevision: currentRev,
+        }),
+      });
+
+      if (res.status === 404) {
+        // Not yet created on server: create it
+        const createRes = await fetch('/api/v1/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(projToSave),
+        });
+        if (createRes.ok) {
+          const data = await createRes.json();
+          setProject((prev) => ({
+            ...prev,
+            revision: data.project.revision,
+            updatedAt: data.project.updatedAt,
+            createdAt: data.project.createdAt,
+          }));
+          setSaveStatus('saved');
+          return;
+        }
+      } else if (res.status === 412) {
+        const err = await res.json();
+        setSaveStatus('conflict');
+        showStatus(`⚠️ Concurrent edit conflict: server is on rev-${err.currentRevision}. Click Conflict to resolve.`);
+        return;
+      } else if (res.ok) {
+        const data = await res.json();
+        setProject((prev) => ({
+          ...prev,
+          revision: data.project.revision,
+          updatedAt: data.project.updatedAt,
+        }));
+        setSaveStatus('saved');
+        return;
+      }
+      setSaveStatus('error');
+    } catch (err) {
+      console.warn('Save project error:', err);
+      setSaveStatus('error');
+    }
+  };
+
+  const reloadProjectFromServer = async () => {
+    try {
+      setSaveStatus('saving');
+      const res = await fetch(`/api/v1/projects/${project.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.project) {
+          setProject(data.project);
+          setSaveStatus('saved');
+          showStatus(`Loaded latest project from server (rev-${data.project.revision}).`);
+        }
+      }
+    } catch (err) {
+      console.warn('Reload error:', err);
+    }
+  };
+
+  // Initial load: fetch saved projects from server on owner login
+  useEffect(() => {
+    if (authStatus !== 'ok') return;
+    let cancelled = false;
+
+    fetch('/api/v1/projects')
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.projects && data.projects.length > 0) {
+          const latestId = data.projects[0].id;
+          fetch(`/api/v1/projects/${latestId}`)
+            .then((r) => r.json())
+            .then((pData) => {
+              if (cancelled) return;
+              if (pData.project) {
+                setProject(pData.project);
+                if (pData.project.arcs?.[0]?.id) {
+                  setSelectedArcId(pData.project.arcs[0].id);
+                }
+                setSaveStatus('saved');
+              }
+              setIsInitialLoadDone(true);
+            })
+            .catch(() => setIsInitialLoadDone(true));
+        } else {
+          setIsInitialLoadDone(true);
+        }
+      })
+      .catch(() => setIsInitialLoadDone(true));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus]);
+
+  // Debounced autosave effect
+  useEffect(() => {
+    if (!isInitialLoadDone || authStatus !== 'ok') return;
+
+    setSaveStatus('unsaved');
+    const timer = setTimeout(() => {
+      saveProjectToServer(project);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [project, isInitialLoadDone, authStatus]);
 
   // Find currently active arc
   const activeArc = project.arcs.find((a) => a.id === selectedArcId) || project.arcs[0];
@@ -361,6 +486,8 @@ export default function App() {
     totalDurationMinutes: number;
     genre: string;
     rawManhwaChapters?: string;
+    uploadedVideoUrl?: string;
+    uploadedVideoFilename?: string;
   }) => {
     try {
       setIsChunking(true);
@@ -418,6 +545,8 @@ export default function App() {
         titleUrdu: `مکمل کہانی (اردو ڈب)`,
         sourceVideoUrl: data.videoUrl,
         youtubeId: ytId,
+        uploadedVideoUrl: data.uploadedVideoUrl,
+        uploadedVideoFilename: data.uploadedVideoFilename,
         totalDurationMinutes: data.totalDurationMinutes,
         genre: data.genre,
         mainCharacter: 'Protagonist',
@@ -451,6 +580,15 @@ export default function App() {
         setActiveView={setActiveView}
         completedArcsCount={completedArcsCount}
         totalArcsCount={totalArcsCount}
+        saveStatus={saveStatus}
+        revision={project.revision || 1}
+        onManualSave={() => {
+          if (saveStatus === 'conflict') {
+            reloadProjectFromServer();
+          } else {
+            saveProjectToServer(project);
+          }
+        }}
       />
 
       {/* Demo fixture labeling (AUDIT F10): preset content is never presented as
@@ -500,6 +638,8 @@ export default function App() {
           <AutoDubbingStudio
             arc={activeArc}
             allArcs={project.arcs}
+            project={project}
+            onUpdateProject={setProject}
             onSelectArc={handleSelectArc}
             selectedVoice={selectedVoice}
             onSelectVoice={setSelectedVoice}

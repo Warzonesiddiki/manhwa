@@ -6,6 +6,11 @@ import multer from 'multer';
 import { execFile } from 'child_process';
 import util from 'util';
 import { GoogleGenAI, Type } from '@google/genai';
+import { ProjectStore } from './server/storage/projectStore';
+import { UploadStore } from './server/storage/uploadStore';
+import { getOpenApiSpec } from './server/contracts/openapi';
+import { sendApiError, ApiError } from './server/contracts/errors';
+import { validateProjectInput, assertNoMediaPayloadsInJson } from './server/contracts/schemas';
 
 dotenv.config();
 
@@ -16,6 +21,16 @@ const PORT = process.env.PORT || 3000;
 const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(express.json({ limit: '50mb' }));
+
+// Request-Id correlation tracking middleware (TASK-008, doc-06)
+app.use((req, res, next) => {
+  const reqId =
+    (req.headers['x-request-id'] as string) ||
+    `req_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+  (req as any).requestId = reqId;
+  res.setHeader('X-Request-Id', reqId);
+  next();
+});
 
 // Directories for original videos, uploads, audio cache, and dubbed outputs
 const videosDir = path.resolve(process.cwd(), 'public/videos');
@@ -230,6 +245,11 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// OpenAPI 3.1.0 specification endpoint (TASK-008)
+app.get(['/api/v1/openapi.json', '/openapi.json'], (_req, res) => {
+  res.json(getOpenApiSpec());
+});
+
 app.post('/api/auth/login', (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   if (loginThrottled(ip)) {
@@ -270,6 +290,434 @@ app.use('/dubbed-videos', requireOwner);
 app.use('/videos', untrustedStatic(videosDir));
 app.use('/dubbed-videos', untrustedStatic(dubbedVideosDir));
 app.use('/uploads', untrustedStatic(uploadsDir));
+
+const projectStore = new ProjectStore();
+const uploadStore = new UploadStore();
+
+// --- Project & Revision Persistence (TASK-007, TEST-005, AUDIT F14) --------
+// Durable project repository with optimistic concurrency control (RFC 6585)
+app.get(['/api/v1/projects', '/api/projects'], async (_req, res) => {
+  try {
+    const projects = await projectStore.list();
+    return res.json({ projects });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to list projects' });
+  }
+});
+
+app.post(['/api/v1/projects', '/api/projects'], async (req, res) => {
+  try {
+    const validated = validateProjectInput(req.body || {});
+    const result = await projectStore.create(validated);
+    if (!result.ok) {
+      return sendApiError(res, result.code, 'INVALID_PAYLOAD', result.error, req);
+    }
+    res.setHeader('ETag', `"rev-${result.project.revision}"`);
+    return res.status(201).json({ project: result.project });
+  } catch (err: any) {
+    if (err instanceof ApiError) {
+      return sendApiError(res, err.status, err.code, err.message, req, { details: err.details });
+    }
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to create project', req);
+  }
+});
+
+app.get(['/api/v1/projects/:id', '/api/projects/:id'], async (req, res) => {
+  try {
+    const project = await projectStore.get(req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    res.setHeader('ETag', `"rev-${project.revision ?? 1}"`);
+    return res.json({ project });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to fetch project', req);
+  }
+});
+
+app.put(['/api/v1/projects/:id', '/api/projects/:id'], async (req, res) => {
+  try {
+    assertNoMediaPayloadsInJson(req.body, 'project');
+    const ifMatch = req.headers['if-match'];
+    const expectedRevision = req.body?.expectedRevision !== undefined ? req.body.expectedRevision : ifMatch;
+    const updates = req.body?.project ? req.body.project : req.body;
+    const result = await projectStore.update(req.params.id, updates, expectedRevision);
+    if (!result.ok) {
+      if (result.currentRevision !== undefined) {
+        res.setHeader('ETag', `"rev-${result.currentRevision}"`);
+      }
+      const errorCode =
+        result.code === 412
+          ? 'REVISION_CONFLICT'
+          : result.code === 428
+          ? 'PRECONDITION_REQUIRED'
+          : 'NOT_FOUND';
+      return sendApiError(res, result.code, errorCode, result.error, req, {
+        details: { currentRevision: result.currentRevision },
+      });
+    }
+    res.setHeader('ETag', `"rev-${result.project.revision}"`);
+    return res.json({ project: result.project });
+  } catch (err: any) {
+    if (err instanceof ApiError) {
+      return sendApiError(res, err.status, err.code, err.message, req, { details: err.details });
+    }
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to update project', req);
+  }
+});
+
+app.delete(['/api/v1/projects/:id', '/api/projects/:id'], async (req, res) => {
+  try {
+    const deleted = await projectStore.delete(req.params.id);
+    if (!deleted) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    return res.json({ ok: true, message: `Project "${req.params.id}" deleted` });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to delete project', req);
+  }
+});
+
+// --- Scoped Resumable Upload Sessions & Quarantined Assets (TASK-009, TEST-003/004) ---
+// Direct private chunked uploads with server-confirmed byte offsets, checksum verification,
+// container inspection, and range-capable delivery.
+app.post(['/api/v1/projects/:id/upload-sessions', '/api/projects/:id/upload-sessions'], async (req, res) => {
+  try {
+    const project = await projectStore.get(req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    const { filename, declaredSize, mimeType, sha256, chunkSize } = req.body || {};
+    const result = await uploadStore.createSession({
+      projectId: req.params.id,
+      filename,
+      declaredSize,
+      mimeType,
+      sha256,
+      chunkSize,
+    });
+    if (!result.ok) {
+      return sendApiError(res, result.code, (result.errorCode as any) || 'INVALID_PAYLOAD', result.error, req);
+    }
+    return res.status(201).json({
+      session: result.session,
+      asset: result.asset,
+      uploadUrl: `/api/v1/projects/${req.params.id}/upload-sessions/${result.session.id}/chunks`,
+    });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to create upload session', req);
+  }
+});
+
+app.get(['/api/v1/projects/:id/upload-sessions/:sessionId', '/api/projects/:id/upload-sessions/:sessionId'], async (req, res) => {
+  try {
+    const session = await uploadStore.getSession(req.params.sessionId);
+    if (!session || session.projectId !== req.params.id) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Upload session "${req.params.sessionId}" not found`, req);
+    }
+    return res.json({ session });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to fetch upload session', req);
+  }
+});
+
+app.put(
+  ['/api/v1/projects/:id/upload-sessions/:sessionId/chunks', '/api/projects/:id/upload-sessions/:sessionId/chunks'],
+  express.raw({ type: () => true, limit: '100mb' }),
+  async (req, res) => {
+    try {
+      const session = await uploadStore.getSession(req.params.sessionId);
+      if (!session || session.projectId !== req.params.id) {
+        return sendApiError(res, 404, 'NOT_FOUND', `Upload session "${req.params.sessionId}" not found`, req);
+      }
+
+      let offset: number | undefined;
+      const range = req.headers['content-range'];
+      if (typeof range === 'string') {
+        const m = range.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+        if (m) offset = parseInt(m[1], 10);
+      }
+      if (offset === undefined && req.headers['x-upload-offset'] !== undefined) {
+        offset = parseInt(req.headers['x-upload-offset'] as string, 10);
+      }
+      if (offset === undefined && req.query.offset !== undefined) {
+        offset = parseInt(req.query.offset as string, 10);
+      }
+
+      if (offset === undefined || isNaN(offset) || offset < 0) {
+        return sendApiError(
+          res,
+          400,
+          'INVALID_PAYLOAD',
+          'Upload offset must be specified via Content-Range header, X-Upload-Offset header, or offset query param',
+          req
+        );
+      }
+
+      const chunk = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+      if (chunk.length === 0) {
+        return sendApiError(res, 400, 'INVALID_PAYLOAD', 'Chunk payload cannot be empty', req);
+      }
+
+      const result = await uploadStore.appendChunk(req.params.sessionId, chunk, offset);
+      if (!result.ok) {
+        return sendApiError(res, result.code, result.errorCode as any, result.error, req, {
+          details: result.details,
+        });
+      }
+
+      return res.json({ ok: true, uploadedBytes: result.uploadedBytes, status: result.status });
+    } catch (err: any) {
+      return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to append chunk', req);
+    }
+  }
+);
+
+app.post(['/api/v1/projects/:id/upload-sessions/:sessionId/resume', '/api/projects/:id/upload-sessions/:sessionId/resume'], async (req, res) => {
+  try {
+    const session = await uploadStore.getSession(req.params.sessionId);
+    if (!session || session.projectId !== req.params.id) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Upload session "${req.params.sessionId}" not found`, req);
+    }
+    if (session.status === 'session_expired' || new Date(session.expiresAt).getTime() <= Date.now()) {
+      return sendApiError(res, 410, 'TRANSFER_SESSION_EXPIRED', 'Upload session has expired', req);
+    }
+    return res.json({
+      ok: true,
+      session: {
+        id: session.id,
+        status: session.status,
+        uploadedBytes: session.uploadedBytes,
+        declaredSize: session.declaredSize,
+        expiresAt: session.expiresAt,
+      },
+    });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to resume upload session', req);
+  }
+});
+
+app.post(['/api/v1/projects/:id/upload-sessions/:sessionId/cancel', '/api/projects/:id/upload-sessions/:sessionId/cancel'], async (req, res) => {
+  try {
+    const session = await uploadStore.getSession(req.params.sessionId);
+    if (!session || session.projectId !== req.params.id) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Upload session "${req.params.sessionId}" not found`, req);
+    }
+    const result = await uploadStore.cancelSession(req.params.sessionId);
+    return res.json({ ok: true, status: result.status });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to cancel upload session', req);
+  }
+});
+
+app.post(['/api/v1/projects/:id/assets/:assetId/finalize', '/api/projects/:id/assets/:assetId/finalize'], async (req, res) => {
+  try {
+    const project = await projectStore.get(req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    const result = await uploadStore.finalizeAsset(req.params.id, req.params.assetId);
+    if (!result.ok) {
+      return sendApiError(res, result.code, result.errorCode as any, result.error, req, {
+        details: result.details,
+      });
+    }
+
+    // Link finalized asset to project model
+    project.uploadedVideoUrl = `/api/v1/assets/${result.asset.id}/access`;
+    project.uploadedVideoFilename = result.asset.filename;
+    project.sourceAssetId = result.asset.id;
+    if (result.asset.durationMs) {
+      project.durationMs = result.asset.durationMs;
+      project.totalDurationMinutes = Math.max(1, Math.round(result.asset.durationMs / 60000));
+    }
+    await projectStore.update(req.params.id, project, project.revision);
+
+    return res.json({ ok: true, asset: result.asset });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to finalize asset', req);
+  }
+});
+
+// Explicit media inspection endpoint (TASK-010)
+app.post(['/api/v1/projects/:id/assets/:assetId/inspect', '/api/projects/:id/assets/:assetId/inspect'], async (req, res) => {
+  try {
+    const project = await projectStore.get(req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    const result = await uploadStore.inspectAsset(req.params.id, req.params.assetId);
+    if (!result.ok) {
+      return sendApiError(res, result.code, result.errorCode as any, result.error, req, {
+        details: result.details,
+      });
+    }
+
+    if (result.sourceMetadata.durationMs) {
+      project.durationMs = result.sourceMetadata.durationMs;
+      project.totalDurationMinutes = Math.max(1, Math.round(result.sourceMetadata.durationMs / 60000));
+      await projectStore.update(req.params.id, project, project.revision);
+    }
+
+    return res.json({
+      ok: true,
+      asset: result.asset,
+      sourceMetadata: result.sourceMetadata,
+    });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to inspect media asset', req);
+  }
+});
+
+// Generate or trigger preview proxy generation (TASK-010)
+app.post(['/api/v1/projects/:id/assets/:assetId/preview', '/api/projects/:id/assets/:assetId/preview'], async (req, res) => {
+  try {
+    const project = await projectStore.get(req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    const result = await uploadStore.generateAssetPreview(req.params.id, req.params.assetId);
+    if (!result.ok) {
+      return sendApiError(res, result.code, result.errorCode as any, result.error, req);
+    }
+    return res.json({
+      ok: true,
+      previewUrl: `/api/v1/assets/${req.params.assetId}/preview`,
+      asset: result.asset,
+    });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to generate preview proxy', req);
+  }
+});
+
+app.get(['/api/v1/projects/:id/assets', '/api/projects/:id/assets'], async (req, res) => {
+  try {
+    const project = await projectStore.get(req.params.id);
+    if (!project) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Project "${req.params.id}" not found`, req);
+    }
+    const assets = await uploadStore.listProjectAssets(req.params.id);
+    return res.json({ assets });
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to list project assets', req);
+  }
+});
+
+app.get(['/api/v1/assets/:id/access', '/api/assets/:id/access'], async (req, res) => {
+  try {
+    const asset = await uploadStore.getAsset(req.params.id);
+    if (!asset) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Asset "${req.params.id}" not found`, req);
+    }
+    if (asset.status !== 'inspected_ready') {
+      return sendApiError(
+        res,
+        403,
+        'QUARANTINE_REJECTED',
+        `Asset "${req.params.id}" is in status "${asset.status}"; access denied until quarantine inspection succeeds.`,
+        req
+      );
+    }
+    if (!fs.existsSync(asset.storagePath)) {
+      return sendApiError(res, 404, 'ARTIFACT_MISSING', 'Asset media file missing on disk', req);
+    }
+
+    const stat = fs.statSync(asset.storagePath);
+    const total = stat.size;
+    const range = req.headers.range;
+
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Type', asset.mimeType || 'video/mp4');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox; frame-ancestors 'none'");
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+
+      if (isNaN(start) || isNaN(end) || start > end || start >= total) {
+        res.setHeader('Content-Range', `bytes */${total}`);
+        return res.status(416).send('Requested range not satisfiable');
+      }
+
+      const chunksize = end - start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', chunksize);
+
+      const stream = fs.createReadStream(asset.storagePath, { start, end });
+      stream.pipe(res);
+    } else {
+      res.setHeader('Content-Length', total);
+      const stream = fs.createReadStream(asset.storagePath);
+      stream.pipe(res);
+    }
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to access asset', req);
+  }
+});
+
+// Stream preview proxy with range capability (TASK-010, TEST-004)
+app.get(['/api/v1/assets/:id/preview', '/api/assets/:id/preview'], async (req, res) => {
+  try {
+    const asset = await uploadStore.getAsset(req.params.id);
+    if (!asset) {
+      return sendApiError(res, 404, 'NOT_FOUND', `Asset "${req.params.id}" not found`, req);
+    }
+    if (asset.status !== 'inspected_ready') {
+      return sendApiError(
+        res,
+        403,
+        'QUARANTINE_REJECTED',
+        `Asset "${req.params.id}" is in status "${asset.status}"; preview denied until quarantine inspection succeeds.`,
+        req
+      );
+    }
+
+    let filePath = asset.previewStoragePath;
+    if (!filePath || !fs.existsSync(filePath)) {
+      filePath = asset.storagePath;
+    }
+    if (!filePath || !fs.existsSync(filePath)) {
+      return sendApiError(res, 404, 'ARTIFACT_MISSING', 'Preview proxy media missing on disk', req);
+    }
+
+    const stat = fs.statSync(filePath);
+    const total = stat.size;
+    const range = req.headers.range;
+
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox; frame-ancestors 'none'");
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+
+      if (isNaN(start) || isNaN(end) || start > end || start >= total) {
+        res.setHeader('Content-Range', `bytes */${total}`);
+        return res.status(416).send('Requested range not satisfiable');
+      }
+
+      const chunksize = end - start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', chunksize);
+
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.pipe(res);
+    } else {
+      res.setHeader('Content-Length', total);
+      const stream = fs.createReadStream(filePath);
+      stream.pipe(res);
+    }
+  } catch (err: any) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', err.message || 'Failed to stream preview proxy', req);
+  }
+});
 
 /**
  * Split long-form manhwa marathon into 15-30 min arcs
@@ -990,7 +1438,8 @@ app.post('/api/dub-video-studio', async (req, res) => {
       masterAudioUrl: `/audio-cache/${masterAudioFilename}`,
       partial: missingSegments.length > 0,
       missingSegments,
-      message: 'Original video and studio Urdu voiceover successfully merged!',
+      audioMode: 'replaced_original_audio',
+      message: 'Original video and studio Urdu voiceover successfully merged; original English audio completely replaced with Urdu narration.',
     });
   } catch (err: any) {
     console.error('Error in dub-video-studio:', err);

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Download, FileAudio, FileText, Check, Youtube, FolderArchive, Video, RefreshCw } from 'lucide-react';
+import { X, Download, FileAudio, FileText, Check, Youtube, FolderArchive, Video, RefreshCw, AlertCircle } from 'lucide-react';
 import { StoryArc, MarathonProject } from '../types';
 import { generateSrtContent, downloadFile, generateYouTubeChapters, dubVideoStudio } from '../utils/audioSynthesizer';
 
@@ -17,6 +17,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   project,
 }) => {
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isStitching, setIsStitching] = useState(false);
   const [isDubbingVideo, setIsDubbingVideo] = useState(false);
 
@@ -24,7 +25,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   const triggerSuccess = (msg: string) => {
     setDownloadSuccess(msg);
-    setTimeout(() => setDownloadSuccess(null), 3000);
+    setTimeout(() => setDownloadSuccess(null), 3500);
+  };
+
+  const triggerError = (msg: string) => {
+    setDownloadError(msg);
+    setTimeout(() => setDownloadError(null), 5000);
   };
 
   const handleDownloadSrt = (mode: 'dual' | 'urdu' | 'roman') => {
@@ -70,9 +76,9 @@ ${chapters}
         downloadFile(audioBlob, `${arc.title.replace(/[^a-zA-Z0-9]/g, '_')}_Master_Urdu_Dub.wav`, 'audio/wav');
         triggerSuccess(`Downloaded Complete Master Audio Track (${Math.round(res.durationSeconds / 60)} min WAV)!`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Could not stitch master audio. Please ensure segments are dubbed.');
+      triggerError('Could not stitch master audio: ' + (err?.message || 'Please ensure segments are dubbed.'));
     } finally {
       setIsStitching(false);
     }
@@ -81,11 +87,12 @@ ${chapters}
   const handleDownloadStudioVideo = async () => {
     try {
       setIsDubbingVideo(true);
-      triggerSuccess('Muxing original manhwa video with spoken Urdu audio via FFmpeg...');
+      triggerSuccess('Muxing original manhwa video with spoken Urdu audio via FFmpeg (original English audio completely replaced)...');
 
       const totalSecs = Math.max(105, arc.segments[arc.segments.length - 1]?.end || 105);
       const res = await dubVideoStudio({
-        videoSource: 'sample',
+        videoSource: project.uploadedVideoUrl ? 'uploaded' : 'sample',
+        uploadedVideoUrl: project.uploadedVideoUrl || undefined,
         arcId: arc.id,
         segments: arc.segments,
         totalDurationSeconds: totalSecs,
@@ -102,7 +109,7 @@ ${chapters}
       }
     } catch (err: any) {
       console.error(err);
-      alert(`Video download notice: ${err.message || 'Failed to merge video and audio'}`);
+      triggerError(`Video download notice: ${err.message || 'Failed to merge video and audio'}`);
     } finally {
       setIsDubbingVideo(false);
     }
@@ -135,6 +142,13 @@ ${chapters}
           </div>
         )}
 
+        {downloadError && (
+          <div className="bg-rose-500/10 border-b border-rose-500/20 px-6 py-2.5 flex items-center gap-2 text-xs text-rose-400">
+            <AlertCircle className="w-4 h-4" />
+            <span>{downloadError}</span>
+          </div>
+        )}
+
         <div className="p-6 space-y-4">
           {/* Group 1: Complete Dubbed Video */}
           <div className="space-y-2">
@@ -156,7 +170,7 @@ ${chapters}
                     {isDubbingVideo ? 'Processing FFmpeg Muxing...' : 'Download Studio Dubbed Video (.MP4)'}
                   </h4>
                   <p className="text-[10px] text-slate-300">
-                    Original Manhwa video + studio spoken Urdu audio merged into high quality 1080p MP4 (Full Duration)
+                    Original Video Visuals + Spoken Urdu Narration (Original English audio completely replaced)
                   </p>
                 </div>
               </div>

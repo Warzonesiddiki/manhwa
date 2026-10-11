@@ -33,10 +33,18 @@ export interface MarathonProject {
   titleUrdu: string;
   sourceVideoUrl: string;
   youtubeId?: string;
+  uploadedVideoUrl?: string;
+  uploadedVideoFilename?: string;
+  sourceAssetId?: string;
+  durationMs?: number;
   totalDurationMinutes: number;
   genre: string;
   mainCharacter: string;
   arcs: StoryArc[];
+  revision?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  ownerId?: string;
 }
 
 export type GeminiVoiceName = 'Zephyr' | 'Fenrir' | 'Kore' | 'Puck' | 'Charon';
