@@ -13,11 +13,33 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const REPO_ROOT = process.cwd();
+export const TEST_OWNER_TOKEN = 'test-owner-token-0123456789abcdef';
 
 export interface BootedServer {
   base: string;
   tmpDir: string;
   child: ChildProcess;
+}
+
+/** Exchange the owner token for a session cookie; returns "mh_session=..." */
+export async function login(base: string, token: string): Promise<string> {
+  const res = await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) throw new Error(`login failed: ${res.status}`);
+  const setCookie = res.headers.get('set-cookie') || '';
+  const cookie = setCookie.split(';')[0];
+  if (!cookie) throw new Error('login returned no session cookie');
+  return cookie;
+}
+
+/** Merge a session cookie into fetch init headers. */
+export function withCookie(cookie: string, init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  headers.set('cookie', cookie);
+  return { ...init, headers };
 }
 
 export function freePort(): Promise<number> {
@@ -57,6 +79,8 @@ export interface BootOptions {
   /** Marker HTML served as the built client in production mode. */
   marker?: string;
   entry?: string;
+  /** Owner token for the session auth; pass null to omit (fail-closed test). */
+  ownerToken?: string | null;
 }
 
 export async function bootServer(opts: BootOptions = {}): Promise<BootedServer> {
@@ -67,6 +91,8 @@ export async function bootServer(opts: BootOptions = {}): Promise<BootedServer> 
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const entry = opts.entry ?? path.join(REPO_ROOT, 'server.ts');
+  const ownerEnv =
+    opts.ownerToken === null ? { OWNER_TOKEN: '' } : { OWNER_TOKEN: opts.ownerToken ?? TEST_OWNER_TOKEN };
   const child = spawn(path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx'), [entry], {
     cwd: tmpDir,
     env: {
@@ -75,6 +101,7 @@ export async function bootServer(opts: BootOptions = {}): Promise<BootedServer> 
       NODE_ENV: 'production',
       GEMINI_API_KEY: '',
       APP_URL: base,
+      ...ownerEnv,
       ...(opts.env ?? {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],

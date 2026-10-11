@@ -1,18 +1,29 @@
 /**
  * Security/honesty regression tests for TASK-005 (AUDIT F01, F02, F07, F09, F10).
  * Every test reproduces a confirmed audit behavior and asserts the repaired state.
+ * Requests carry the owner session cookie (TASK-006); unauthenticated access is
+ * covered by tests/api/auth.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { bootServer, shutdownServer, type BootedServer } from '../helpers/boot';
+import {
+  bootServer,
+  shutdownServer,
+  login,
+  withCookie,
+  TEST_OWNER_TOKEN,
+  type BootedServer,
+} from '../helpers/boot';
 
 let server: BootedServer;
 let base: string;
+let cookie: string;
 
 beforeAll(async () => {
   server = await bootServer({ marker: 'SEC-MARKER' });
   base = server.base;
+  cookie = await login(base, TEST_OWNER_TOKEN);
 }, 30000);
 
 afterAll(() => shutdownServer(server));
@@ -27,18 +38,26 @@ function listWavs() {
   return readdirSync(cacheDir()).filter((f) => f.endsWith('.wav'));
 }
 
+function authed(url: string, init: RequestInit = {}) {
+  return fetch(url, withCookie(cookie, init));
+}
+
+function jsonPost(body: unknown): RequestInit {
+  return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+}
+
 async function uploadMultipart(filename: string, bytes: Uint8Array | string, type = 'application/octet-stream') {
   const form = new FormData();
   const blob = new Blob([bytes as BlobPart], { type });
   form.append('video', blob, filename);
-  return fetch(`${base}/api/upload-video`, { method: 'POST', body: form });
+  return authed(`${base}/api/upload-video`, { method: 'POST', body: form });
 }
 
 describe('F01 — path containment', () => {
   it('rejects encoded traversal reads with 400 and leaks no sentinel', async () => {
     const sentinel = 'AUDIT-F01-SENTINEL-OUTSIDE';
     writeFileSync(path.join(server.tmpDir, 'audit-sentinel.txt'), sentinel);
-    const res = await fetch(`${base}/audio-cache/..%2Faudit-sentinel.txt`);
+    const res = await authed(`${base}/audio-cache/..%2Faudit-sentinel.txt`);
     expect(res.status).toBe(400);
     const body = await res.text();
     expect(body).not.toContain(sentinel);
@@ -46,55 +65,52 @@ describe('F01 — path containment', () => {
 
   it('rejects traversal in plain and dot-dot parameter forms', async () => {
     for (const name of ['..%2F..%2Fetc%2Fpasswd', '%2e%2e%2faudit-sentinel.txt', 'sub%2Fdir.wav']) {
-      const res = await fetch(`${base}/audio-cache/${name}`);
+      const res = await authed(`${base}/audio-cache/${name}`);
       expect(res.status).toBe(400);
     }
   });
 
   it('does not create files outside the cache via GET fallback (write probe)', async () => {
     const before = readdirSync(server.tmpDir).sort();
-    const res = await fetch(`${base}/audio-cache/..%2Faudit-generated.wav`);
+    const res = await authed(`${base}/audio-cache/..%2Faudit-generated.wav`);
     expect(res.status).toBe(400);
     expect(existsSync(path.join(server.tmpDir, 'audit-generated.wav'))).toBe(false);
     expect(readdirSync(server.tmpDir).sort()).toEqual(before);
   });
 
   it('rejects traversal segment/arc IDs on write routes with 400', async () => {
-    const stitch = await fetch(`${base}/api/gemini/stitch-master-audio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const stitch = await authed(
+      `${base}/api/gemini/stitch-master-audio`,
+      jsonPost({
         segments: [{ id: '../evil', start: 0, end: 1 }],
         totalDurationSeconds: 10,
         arcId: 'arc-1',
       }),
-    });
+    );
     expect(stitch.status).toBe(400);
 
-    const badArc = await fetch(`${base}/api/gemini/stitch-master-audio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const badArc = await authed(
+      `${base}/api/gemini/stitch-master-audio`,
+      jsonPost({
         segments: [{ id: 'seg-ok', start: 0, end: 1 }],
         totalDurationSeconds: 10,
         arcId: '../../etc',
       }),
-    });
+    );
     expect(badArc.status).toBe(400);
   });
 
   it('refuses client-supplied filesystem paths as uploaded video references', async () => {
-    const res = await fetch(`${base}/api/dub-video-studio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await authed(
+      `${base}/api/dub-video-studio`,
+      jsonPost({
         videoSource: 'uploaded',
         uploadedVideoUrl: '../../public/videos/sample-manhwa-original.mp4',
         arcId: 'arc-1',
         segments: [{ id: 'seg-1', start: 0, end: 1 }],
         totalDurationSeconds: 5,
       }),
-    });
+    );
     // Must fail; must NOT silently fall back to the sample video (F12).
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -105,9 +121,9 @@ describe('F01 — path containment', () => {
 describe('F07 — GET/HEAD audio-cache is strictly read-only', () => {
   it('returns 404 for a missing artifact and creates nothing', async () => {
     const before = listWavs();
-    const getRes = await fetch(`${base}/audio-cache/not-there.wav`);
+    const getRes = await authed(`${base}/audio-cache/not-there.wav`);
     expect(getRes.status).toBe(404);
-    const headRes = await fetch(`${base}/audio-cache/not-there.wav`, { method: 'HEAD' });
+    const headRes = await authed(`${base}/audio-cache/not-there.wav`, { method: 'HEAD' });
     expect(headRes.status).toBe(404);
     expect(listWavs()).toEqual(before);
     expect(existsSync(path.join(cacheDir(), 'not-there.wav'))).toBe(false);
@@ -116,7 +132,7 @@ describe('F07 — GET/HEAD audio-cache is strictly read-only', () => {
   it('serves an existing artifact read-only with nosniff', async () => {
     const name = 'read-only-check.wav';
     writeFileSync(path.join(cacheDir(), name), Buffer.from('RIFFfakeWAVE'));
-    const res = await fetch(`${base}/audio-cache/${name}`);
+    const res = await authed(`${base}/audio-cache/${name}`);
     expect(res.status).toBe(200);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(Buffer.from(await res.arrayBuffer()).toString()).toContain('RIFFfakeWAVE');
@@ -156,7 +172,7 @@ describe('F02 — upload validation', () => {
     expect(body.success).toBe(true);
     expect(body.filename).toMatch(/^orig_[0-9]+_[0-9a-f]+\.mp4$/);
     // Served with hardening headers so stored media can never execute.
-    const served = await fetch(`${base}${body.videoUrl}`);
+    const served = await authed(`${base}${body.videoUrl}`);
     expect(served.status).toBe(200);
     expect(served.headers.get('x-content-type-options')).toBe('nosniff');
     expect(served.headers.get('content-security-policy')).toContain('sandbox');
@@ -166,11 +182,10 @@ describe('F02 — upload validation', () => {
 describe('F09/F10 — honest failures, no fabricated speech or transcripts', () => {
   it('TTS POST without credentials returns 400 and writes no audio', async () => {
     const before = listWavs();
-    const res = await fetch(`${base}/api/gemini/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'یہ ایک ٹیسٹ ہے', segmentId: 'seg-test-1', voiceName: 'Zephyr' }),
-    });
+    const res = await authed(
+      `${base}/api/gemini/tts`,
+      jsonPost({ text: 'یہ ایک ٹیسٹ ہے', segmentId: 'seg-test-1', voiceName: 'Zephyr' }),
+    );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/GEMINI_API_KEY/);
@@ -178,11 +193,10 @@ describe('F09/F10 — honest failures, no fabricated speech or transcripts', () 
   });
 
   it('batch TTS without credentials returns 400 with no fabricated results', async () => {
-    const res = await fetch(`${base}/api/gemini/batch-tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ segments: [{ id: 'seg-b1', urduText: 'ہیلو' }] }),
-    });
+    const res = await authed(
+      `${base}/api/gemini/batch-tts`,
+      jsonPost({ segments: [{ id: 'seg-b1', urduText: 'ہیلو' }] }),
+    );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; results?: unknown };
     expect(body.error).toMatch(/GEMINI_API_KEY/);
@@ -190,26 +204,17 @@ describe('F09/F10 — honest failures, no fabricated speech or transcripts', () 
   });
 
   it('rejects invalid segment IDs and oversized text on TTS', async () => {
-    const badId = await fetch(`${base}/api/gemini/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'hello', segmentId: '../evil' }),
-    });
+    const badId = await authed(`${base}/api/gemini/tts`, jsonPost({ text: 'hello', segmentId: '../evil' }));
     expect(badId.status).toBe(400);
-    const longText = await fetch(`${base}/api/gemini/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'x'.repeat(10001) }),
-    });
+    const longText = await authed(`${base}/api/gemini/tts`, jsonPost({ text: 'x'.repeat(10001) }));
     expect(longText.status).toBe(400);
   });
 
   it('stitch refuses to render missing segments as silence (409) unless explicitly allowed', async () => {
     writeFileSync(path.join(cacheDir(), 'seg-have.wav'), Buffer.alloc(64, 1));
-    const strict = await fetch(`${base}/api/gemini/stitch-master-audio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const strict = await authed(
+      `${base}/api/gemini/stitch-master-audio`,
+      jsonPost({
         segments: [
           { id: 'seg-have', start: 0, end: 1 },
           { id: 'seg-missing', start: 1, end: 2 },
@@ -217,15 +222,14 @@ describe('F09/F10 — honest failures, no fabricated speech or transcripts', () 
         totalDurationSeconds: 4,
         arcId: 'arc-sec',
       }),
-    });
+    );
     expect(strict.status).toBe(409);
     const body = (await strict.json()) as { missingSegments: string[] };
     expect(body.missingSegments).toEqual(['seg-missing']);
 
-    const partial = await fetch(`${base}/api/gemini/stitch-master-audio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const partial = await authed(
+      `${base}/api/gemini/stitch-master-audio`,
+      jsonPost({
         segments: [
           { id: 'seg-have', start: 0, end: 1 },
           { id: 'seg-missing', start: 1, end: 2 },
@@ -234,7 +238,7 @@ describe('F09/F10 — honest failures, no fabricated speech or transcripts', () 
         arcId: 'arc-sec',
         allowPartial: true,
       }),
-    });
+    );
     expect(partial.status).toBe(200);
     const partialBody = (await partial.json()) as { partial: boolean; missingSegments: string[] };
     expect(partialBody.partial).toBe(true);
@@ -251,21 +255,16 @@ describe('F09/F10 — honest failures, no fabricated speech or transcripts', () 
       [[{ id: 's1', start: 0, end: 2 }], 100000],
       [[], 10],
     ] as const) {
-      const res = await fetch(`${base}/api/gemini/stitch-master-audio`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments, totalDurationSeconds: duration, arcId: 'arc-1' }),
-      });
+      const res = await authed(`${base}/api/gemini/stitch-master-audio`, jsonPost({ segments, totalDurationSeconds: duration, arcId: 'arc-1' }));
       expect(res.status).toBe(400);
     }
   });
 
   it('extract-transcript is disabled with 501 and invents nothing', async () => {
-    const res = await fetch(`${base}/api/gemini/extract-transcript`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: 'https://youtu.be/dQw4w9WgXcQ', titleHint: 'anything' }),
-    });
+    const res = await authed(
+      `${base}/api/gemini/extract-transcript`,
+      jsonPost({ videoUrl: 'https://youtu.be/dQw4w9WgXcQ', titleHint: 'anything' }),
+    );
     expect(res.status).toBe(501);
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/not implemented/i);

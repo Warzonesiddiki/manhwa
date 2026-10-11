@@ -89,5 +89,6 @@ Verified slices are recorded here with evidence; table entries above stay stable
 |---|---|---|
 | `TASK-004` | complete | Toolchain pinned (DEC-008); strict typecheck, ESLint+rules-of-hooks, 21 tests, build green; F06 fixed with regression test. CI workflow prepared (push blocked on GitHub `workflows` permission). |
 | `TASK-005` | complete | F01/F02/F05/F07/F15 repaired with regression tests; F09/F10/F12 honesty repairs (server + client demo isolation); interim F04 input bounds. 46/46 tests green incl. TEST-001 built-server startup/static isolation. |
+| `TASK-006` | complete | Owner-only auth (DEC-011 interim): HMAC-signed HttpOnly session on every API/media route, login throttle, fail-closed without OWNER_TOKEN. TEST-002 suite green (56/56 tests overall). |
 | `TASK-001` | blocked (partial) | Repository clone/branch/push verified in this environment; owner decisions DEC-001/002/005 and AI Studio account checks still open. |
 | All others | not_started | — |

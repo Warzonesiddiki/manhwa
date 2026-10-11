@@ -27,7 +27,8 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(dubbedVideosDir)) fs.mkdirSync(dubbedVideosDir, { recursive: true });
 
 // Hardened static serving for untrusted media: never sniff types, never allow
-// active content to execute on this origin (AUDIT F02).
+// active content to execute on this origin (AUDIT F02). Mounted AFTER the
+// owner-auth guard (TASK-006) so private media requires a session.
 function untrustedStatic(root: string) {
   return express.static(root, {
     index: false,
@@ -39,9 +40,6 @@ function untrustedStatic(root: string) {
     },
   });
 }
-app.use('/videos', untrustedStatic(videosDir));
-app.use('/dubbed-videos', untrustedStatic(dubbedVideosDir));
-app.use('/uploads', untrustedStatic(uploadsDir));
 
 // --- Safe opaque resource names (AUDIT F01) ---------------------------------
 // Client-supplied identifiers must never contain separators or traversal
@@ -150,16 +148,128 @@ const ai = new GoogleGenAI({
   },
 });
 
-/**
- * Health check
- */
+// --- Owner-only authentication (AUDIT F03, TASK-006, DEC-011 interim) -------
+// Single-owner access is enforced server-side on every API and media route.
+// Identity: allowlisted OWNER_TOKEN exchanged for an HMAC-signed HttpOnly
+// session cookie. If OWNER_TOKEN is unset the server FAILS CLOSED (503) —
+// in development an ephemeral token is generated and logged instead.
+// Firebase Authentication is the documented upgrade once DEC-002 is approved.
+const SESSION_COOKIE = 'mh_session';
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12h work session
+let ownerToken: string | null = process.env.OWNER_TOKEN || null;
+if (!ownerToken) {
+  if (isProduction) {
+    console.error('OWNER_TOKEN is not set: all protected routes will fail closed (503).');
+  } else {
+    ownerToken = crypto.randomBytes(24).toString('hex');
+    console.warn(`[dev] OWNER_TOKEN not set — generated ephemeral owner token: ${ownerToken}`);
+    console.warn('[dev] Set the OWNER_TOKEN environment variable for stable sessions.');
+  }
+}
+
+function signSession(exp: number): string {
+  const payload = `v1.${exp}`;
+  const mac = crypto.createHmac('sha256', ownerToken!).update(payload).digest('hex');
+  return `${payload}.${mac}`;
+}
+function verifySession(value: string | undefined): boolean {
+  if (!ownerToken || !value) return false;
+  const parts = value.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return false;
+  const exp = Number(parts[1]);
+  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+  const expected = crypto.createHmac('sha256', ownerToken).update(`v1.${parts[1]}`).digest();
+  let given: Buffer;
+  try {
+    given = Buffer.from(parts[2], 'hex');
+  } catch {
+    return false;
+  }
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx > 0) out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return out;
+}
+// Naive per-IP login throttle (in-memory; adequate for a single-owner service).
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+function loginThrottled(ip: string): boolean {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > 10;
+}
+
+function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!ownerToken) {
+    return res.status(503).json({ error: 'Owner authentication is not configured (OWNER_TOKEN). This service fails closed.' });
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (verifySession(cookies[SESSION_COOKIE])) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Owner authentication required.' });
+}
+
+// Public liveness + session endpoints (registered before the /api guard).
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasApiKey: Boolean(apiKey),
+    hasOwnerAuth: Boolean(ownerToken),
     timestamp: new Date().toISOString(),
   });
 });
+
+app.post('/api/auth/login', (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  if (loginThrottled(ip)) {
+    return res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' });
+  }
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const expected = Buffer.from(ownerToken ?? '');
+  const given = Buffer.from(token);
+  const ok =
+    ownerToken !== null &&
+    given.length === expected.length &&
+    crypto.timingSafeEqual(given, expected);
+  if (!ok) {
+    return res.status(403).json({ error: 'Invalid owner token.' });
+  }
+  const exp = Date.now() + SESSION_TTL_MS;
+  const cookie = `${SESSION_COOKIE}=${encodeURIComponent(signSession(exp))}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${isProduction ? '; Secure' : ''}`;
+  res.setHeader('Set-Cookie', cookie);
+  return res.json({ ok: true, expiresAt: new Date(exp).toISOString() });
+});
+
+app.get('/api/auth/session', (req, res) => {
+  if (!ownerToken) {
+    return res.status(503).json({ authenticated: false, configured: false });
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  const authenticated = verifySession(cookies[SESSION_COOKIE]);
+  return res.status(authenticated ? 200 : 401).json({ authenticated, configured: true });
+});
+
+// Everything else under /api requires an authenticated owner session.
+app.use('/api', requireOwner);
+// Private media directories require the session too (REQ-001/019).
+app.use('/audio-cache', requireOwner);
+app.use('/uploads', requireOwner);
+app.use('/videos', requireOwner);
+app.use('/dubbed-videos', requireOwner);
+app.use('/videos', untrustedStatic(videosDir));
+app.use('/dubbed-videos', untrustedStatic(dubbedVideosDir));
+app.use('/uploads', untrustedStatic(uploadsDir));
 
 /**
  * Split long-form manhwa marathon into 15-30 min arcs

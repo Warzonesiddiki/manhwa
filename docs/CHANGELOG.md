@@ -1,5 +1,13 @@
 # Documentation changelog
 
+## 0.5 — 2026-10-11 (implementation session 3 · TASK-006)
+
+- **TASK-006 complete:** owner-only authentication/authorization (AUDIT F03 core, TEST-002) — 56/56 tests green.
+  - Server-enforced owner sessions: `POST /api/auth/login` (timing-safe, 10/min/IP throttle) exchanges `OWNER_TOKEN` for an HMAC-signed `HttpOnly; SameSite=Strict` cookie (12 h TTL).
+  - Every `/api/*` route except liveness/login/session and every `/audio-cache/*`, `/uploads/*`, `/videos/*`, `/dubbed-videos/*` access requires a valid session; tampered/expired cookies → 401; wrong token → 403; **fail closed** (503) when `OWNER_TOKEN` is unset in production (dev generates and logs an ephemeral token).
+  - Minimal `LoginGate` UI; no JS-readable tokens. TEST-002 suite: unauthenticated API/media 401, wrong-owner 403, throttle 429, tampered-cookie 401, fail-closed 503.
+- New [docs/decisions/DEC-011-auth.md](decisions/DEC-011-auth.md) (interim identity; Firebase upgrade path when DEC-002 is approved); planning-document count raised 53 → 54.
+
 ## 0.4 — 2026-10-11 (implementation session 2 · TASK-005)
 
 - **TASK-005 complete:** repaired audit blockers with regression tests (46/46 green).

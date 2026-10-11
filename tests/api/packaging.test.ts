@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { REPO_ROOT, freePort, waitForHealth, runBuild } from '../helpers/boot';
+import { REPO_ROOT, freePort, waitForHealth, runBuild, TEST_OWNER_TOKEN } from '../helpers/boot';
 
 let child: ChildProcess;
 let base: string;
@@ -30,6 +30,7 @@ beforeAll(async () => {
       PORT: String(port),
       NODE_ENV: 'production',
       GEMINI_API_KEY: '',
+      OWNER_TOKEN: TEST_OWNER_TOKEN,
       APP_URL: base,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -85,7 +86,9 @@ describe('TEST-001 — built artifact startup and isolation', () => {
 
   it('API paths never fall through to HTML', async () => {
     const res = await fetch(`${base}/api/does-not-exist`);
-    expect(res.status).toBe(404);
+    // Unauthenticated requests are refused by the owner-auth guard (401);
+    // authenticated unknown routes return 404. Neither may return the SPA.
+    expect([401, 404]).toContain(res.status);
     const text = await res.text();
     expect(text.toLowerCase()).not.toContain('<!doctype html');
   });

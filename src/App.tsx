@@ -14,6 +14,7 @@ import { ExportModal } from './components/ExportModal';
 import { PRESET_PROJECTS } from './data/presetProjects';
 import { MarathonProject, StoryArc, RecapSegment, GeminiVoiceName } from './types';
 import { synthesizeGeminiTTS } from './utils/audioSynthesizer';
+import { LoginGate } from './components/LoginGate';
 
 export default function App() {
   const [project, setProject] = useState<MarathonProject>(PRESET_PROJECTS[0]);
@@ -38,6 +39,26 @@ export default function App() {
 
   // Status banner / message
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Owner session state (TASK-006): the HttpOnly cookie carries the session,
+  // so no token is stored in JavaScript-accessible storage.
+  const [authStatus, setAuthStatus] = useState<'unknown' | 'ok' | 'login' | 'unconfigured'>('unknown');
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/session')
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 200) setAuthStatus('ok');
+        else if (res.status === 503) setAuthStatus('unconfigured');
+        else setAuthStatus('login');
+      })
+      .catch(() => {
+        if (!cancelled) setAuthStatus('login');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const showStatus = (msg: string) => {
     setStatusMessage(msg);
@@ -421,6 +442,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-body selection:bg-amber-400 selection:text-slate-950">
+      <LoginGate status={authStatus} onSuccess={() => setAuthStatus('ok')} />
       {/* Top Header */}
       <Header
         onOpenIngest={() => setIsIngestOpen(true)}
