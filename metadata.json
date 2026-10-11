@@ -1,0 +1,6 @@
+{
+  "name": "ManhwaUrdu DubStudio",
+  "description": "Automated YouTube English Manhwa recap video to conversational Urdu dubbing, episodic arc chunking, and synchronized voiceover production studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
