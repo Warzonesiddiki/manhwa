@@ -38,7 +38,7 @@ Things deliberately not changed: all other app code, presets/media in Git, `pre-
 | Unit/component/smoke | `npm run test` (vitest 5.0.3) | pass 21/21 | `tests/**` |
 | Build | `npm run build` | pass | `dist/` |
 | Built server start | `NODE_ENV=production GEMINI_API_KEY=audit-placeholder node dist/server.js` | **fail — F05 `Dynamic require of "path" is not supported` (expected; TASK-005 owns the fix)** | terminal 2026-10-11 |
-| CI | `.github/workflows/ci.yml` | **not run locally** — must pass on GitHub after push | Actions run URL after push |
+| CI | `.github/workflows/ci.yml` | **BLOCKED — not run** | GitHub App connection lacks the `workflows` permission: pushing workflow files is rejected (`refusing to allow a GitHub App to create or update workflow ... without workflows permission`). The workflow file is prepared at `.github/workflows/ci.yml` but cannot be pushed (or run on Actions) until the GitHub connection is reconnected with the workflows scope. Then `git push` and confirm the Actions run. |
 | Doc validation | doc-33 script (count updated to 53) | pass | terminal |
 | Media/provider/browser | ffmpeg/ffprobe, Gemini ASR/TTS, Playwright | **not run** — no FFmpeg in sandbox; no API key; no budget approval; no browser env | requires staging worker image + approved key (see below) |
 
@@ -64,6 +64,8 @@ Updated docs/requirement/test IDs: TASK-004 status → complete (evidence in CUR
 ## Recovery
 
 Reproduce: `npx bun install --frozen-lockfile && npm run check` on this commit. Roll back: `git revert` this task's commit(s); `bun.lock`/`package.json` restore to the audited state; no data migrations; no runtime state was created outside temp dirs (API smoke used and deleted `/tmp/manhwa-smoke-*`).
+
+Push state: TASK-004 main work is pushed to `arena/d12f01b6-manhwa`. The CI workflow file exists in the working tree but is **not committed/pushed** because the sandbox GitHub App lacks the `workflows` permission (push rejected). After the owner reconnects GitHub with that scope: `git add .github/workflows/ci.yml && git commit` (message in prior draft: "TASK-004: add GitHub Actions CI workflow") and `git push origin arena/d12f01b6-manhwa`, then verify the Actions run.
 
 ## Next session
 

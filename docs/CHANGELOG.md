@@ -6,7 +6,7 @@
 - **TASK-004 complete:** pinned toolchain per DEC-008 (Bun 1.4.3 + Node ≥22.12 + TypeScript ~6.0.3; esbuild ^0.28.0 aligned to Vite 8 peer range; vitest/RTL and ESLint/typescript-eslint/react-hooks stacks, pinned exactly).
 - Added real lint gate: ESLint with `react-hooks/rules-of-hooks` as error (synthetically verified) and `exhaustive-deps` as warn; 76 legacy warnings tracked. Fixed AUDIT **F06** (ExportModal hook order) with a closed→open regression test.
 - Added 21 tests across 4 suites (srtParser, urduPhonetics, ExportModal F06, API smoke in an isolated temp cwd with no credentials) — `npm run test` green; TEST-001 harness introduced, built-server startup gate remains FAIL under F05 (TASK-005).
-- Added `.github/workflows/ci.yml` (frozen install → typecheck → lint → tests → build; no secrets; public repo noted for the visibility decision).
+- Prepared `.github/workflows/ci.yml` (frozen install → typecheck → lint → tests → build; no secrets). **Push of workflow files is blocked**: the sandbox GitHub App lacks the `workflows` permission; the file stays prepared until the connection is reconnected with that scope, then CI runs on the public repo.
 - New [docs/decisions/DEC-008-toolchain.md](decisions/DEC-008-toolchain.md); planning-document count in the doc-33 validator deliberately raised 52 → 53.
 - Task-status convention: verified slices are recorded in [CURRENT_STATE.md](CURRENT_STATE.md) with exact commands and results; backlog IDs stay stable.
 

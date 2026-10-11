@@ -24,7 +24,7 @@ Personal channel tool; YouTube-link-first; Urdu; sources typically 10–24 hours
 | Unit/component/API smoke | `npm run test` (vitest 5.0.3) | PASS — 21/21 (srtParser 8, urduPhonetics 6, ExportModal F06 regression 2, API smoke 5) |
 | Build | `npm run build` | PASS (client 357 kB / 105 kB gzip; `dist/server.js` built) |
 | Built-server startup | `NODE_ENV=production node dist/server.js` | **FAIL — F05 (`Dynamic require of "path"`); owned by TASK-005, TEST-001 gate stays open** |
-| CI workflow | `.github/workflows/ci.yml` | **NOT RUN locally** — executes on GitHub after push (public repo, no secrets) |
+| CI workflow | `.github/workflows/ci.yml` (prepared) | **BLOCKED** — sandbox GitHub App lacks the `workflows` permission, so the workflow file cannot be pushed and Actions cannot run. Owner action: reconnect GitHub with the workflows scope, commit+push the file, then confirm the run (public repo; workflow has no secrets) |
 | Doc validation | doc-33 structural script (updated to 53 planning docs) | PASS |
 | FFmpeg/media, live provider, browser journeys | — | **NOT RUN** — need FFmpeg worker/staging, approved key+budget, browser env |
 
