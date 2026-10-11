@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --platform=node --bundle --format=esm --outfile=dist/server.js --external:vite --external:express --external:@google/genai --external:dotenv",
+    "build": "vite build && esbuild server.ts --platform=node --bundle --format=esm --packages=external --outfile=dist/server.js",
     "start": "node dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

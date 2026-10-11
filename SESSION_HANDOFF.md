@@ -1,72 +1,63 @@
-# Session handoff — 2026-10-11 · TASK-004 (implementation session 1)
+# Session handoff — 2026-10-11 · TASK-004 + TASK-005 (implementation sessions 1–2)
 
 ## Context
 
-Repository/revision: `Warzonesiddiki/manhwa`, branch `arena/d12f01b6-manhwa`, from baseline `34c6875` (prototype code = audited `e581f0a`; docs-only PR #1 merged on top).
-Current phase: authorized implementation (P1). Owner authorized implementation 2026-10-11 with YOLO delegation of engineering/product decisions.
-Task IDs and authorization scope: **TASK-004 executed and complete** (toolchain/tests/CI). Paid services, cloud provisioning, destructive operations, public deployment, and deferred products (SaaS/voice cloning/panels) remain unauthorized. DEC-001 (source rights) and DEC-005 (budget) still unanswered.
+Repository/revision: `Warzonesiddiki/manhwa`, branch `arena/d12f01b6-manhwa`, base `34c6875` (prototype = audited `e581f0a`).
+Current phase: authorized implementation (P1). Owner authorized implementation 2026-10-11 with YOLO delegation of engineering/product decisions; paid services, cloud provisioning, destructive operations, public deployment and deferred products remain unauthorized.
+Task IDs and authorization scope: **TASK-004 and TASK-005 executed and complete.** DEC-001 (source rights) and DEC-005 (budget) still unanswered.
 
 ## Work performed
 
-Files changed and why:
+**TASK-004 (commit `3bd860e`, pushed):** toolchain pin (Bun 1.4.3 / Node ≥22.12 / TS ~6.0.3 per DEC-008), esbuild ^0.28 aligned to Vite 8 peers (npm ERESOLVE fixed), strict typecheck, ESLint 10 + typescript-eslint + react-hooks (rules-of-hooks error), vitest 5 + RTL test stack, 21 tests, docs (DEC-008 record, CURRENT_STATE, CHANGELOG 0.3, AGENTS phase). **F06 fixed** (ExportModal hooks) with closed→open regression test. CI workflow prepared; its push is blocked (below).
 
-- `package.json` — renamed package to `manhwa-urdu-dubstudio`; pinned `packageManager: bun@1.4.3`, `engines.node >=22.12`; `typescript ~6.0.3` (typescript-eslint cannot load TS 7 — see DEC-008); `esbuild ^0.28.0` (Vite 8 peer, fixes npm ERESOLVE); added pinned devDeps `vitest@5.0.3`, `jsdom@30.1.2`, `@testing-library/react@16.3.3`, `@testing-library/dom@10.4.2`, `eslint@10.12.0`, `@eslint/js@10.0.1`, `typescript-eslint@8.71.1`, `eslint-plugin-react-hooks@7.1.1`; scripts `typecheck`, `lint`, `test`, `check`.
-- `bun.lock` — regenerated for the above (frozen install verified after).
-- `tsconfig.json` — enabled `strict: true` (measured zero-error fallout).
-- `eslint.config.js` — new flat config; `react-hooks/rules-of-hooks: error`, `exhaustive-deps: warn`; legacy `any`/unused-vars as warn; Node globals for `src/serverAudioCache.js`.
-- `src/components/ExportModal.tsx` — **AUDIT F06 fixed**: all three `useState` hooks moved above the `if (!isOpen) return null` early return.
-- `src/utils/audioSynthesizer.ts` — two lint-error micro-fixes (useless initial assignment in `generateSrtContent`; empty catch now documents the best-effort F07 probe pending TASK-005).
-- `tests/unit/srtParser.test.ts`, `tests/unit/urduPhonetics.test.ts` — unit suites for pure utilities (timestamps incl. >1 h, VTT/SRT/CRLF, glossary word-boundary behavior).
-- `tests/components/ExportModal.test.tsx` — F06 closed→open and open→close→open regression (jsdom).
-- `tests/api/smoke.test.ts` — boots real `server.ts` via tsx in an isolated temp cwd (marker `dist/index.html`, `GEMINI_API_KEY=''`): health shape, static client serving, unknown POST 404, malformed JSON 400, missing-key chunk-marathon 400. No provider calls.
-- `vitest.config.ts` — test harness config.
-- `.github/workflows/ci.yml` — CI: frozen bun install → typecheck → lint → test → build (no secrets).
-- `docs/decisions/DEC-008-toolchain.md` — accepted decision record (options/evidence/revisit trigger).
-- `docs/README.md` (hub link), `docs/33-documentation-delivery-governance.md` (validator count 52→53), `docs/CURRENT_STATE.md` (rewritten to current truth), `docs/CHANGELOG.md` (0.3 entry), `AGENTS.md` (phase = authorized implementation + standing prohibitions), `README.md` (status lines).
+**TASK-005 (this commit):** audit-blocker repairs in `server.ts`, `package.json` (build → `--packages=external`), `vite.config.ts` (client → `dist/public`), `src/App.tsx` (client honesty), plus 25 new tests (`tests/helpers/boot.ts`, `tests/api/security.test.ts`, `tests/api/packaging.test.ts`, smoke adapted). Details:
+- **F01:** `isSafeName`/`resolveContained` on every filesystem route (audio-cache GET, tts, batch, stitch, dub, master filenames). Encoded-traversal read + write probes tested.
+- **F02:** upload magic-sniff (ftyp/EBML/AVI), server-derived extensions, HTML/SVG/polyglots rejected and deleted; `uploads`/`videos`/`dubbed-videos` served with `nosniff` + CSP sandbox; multer limit → 413 JSON.
+- **F05/F15:** `esbuild --packages=external` (no CJS dynamic-require crash), client `dist/public` only, SPA fallback excludes `/api/`, `/audio-cache/`, dotfiles and extensioned paths → `/server.js`, `/.env` return 404. TEST-001 green (built server starts, frontend loads, backend unreachable).
+- **F07:** GET/HEAD `/audio-cache` strictly read-only (404 on missing, zero writes); `generateDramaticNarrationWav` + `PRESET_SEGMENTS` deleted from the production server; TTS/batch without key → 400 with no artifacts.
+- **F09 (honesty):** stitch/dub return 409 with `missingSegments` unless `allowPartial:true` (response then marks `partial`); batch per-item `audioGenerated` truthful with `error` codes + `complete`/`failedCount`; client marks arcs `dubbed` only when all lines have audio.
+- **F10 (demo isolation):** `extract-transcript` → 501 (no invented transcripts); preset-dialogue import substitution removed (imported arcs start empty; failures surface as errors); hard-coded "batch scripting" disabled; visible **Demo fixture** banner on preset projects.
+- **F12 (partial):** invalid uploaded-video references → 400, never sample fallback. Render `-shortest`/duration policy remains TASK-022.
+- **F04 (interim):** `validateTimeline` bounds (finite numbers, ≤7200 s, ≤1000 segments, safe IDs, 10k-char text cap). Full streaming/queueing = TASK-020/022/028.
 
-Product behavior actually implemented: **F06 fix only** (modal open/close no longer crashes). Everything else is tooling/tests/docs. GET/HEAD audio-cache still mutates (F07), traversal still open (F01), built server still fails (F05), etc. — unchanged, owned by TASK-005.
-Things deliberately not changed: all other app code, presets/media in Git, `pre-cache.ts`, `src/serverAudioCache.js`, build script (server packaging is TASK-005), no new dependencies beyond the pinned lint/test stack.
+Things deliberately not changed: WAV chunk parsing (F11/TASK-020), auth (F03/TASK-006), persistence (F08/F14/TASK-007), playback sync (F13), arc partition math (F16/TASK-015), media fixtures in Git, `pre-cache.ts` (dev fixture script), remaining legacy lint warnings (78, tracked).
 
 ## Evidence
 
 | Check | Exact command / fixture / job | Result | Evidence location |
 |---|---|---|---|
-| Frozen install | `npx bun install --frozen-lockfile` (clean tree) | pass | terminal; bun.lock coherent |
-| npm resolution | `npm install --dry-run --ignore-scripts --no-audit --no-fund` | pass (was ERESOLVE) | terminal 2026-10-11 |
-| Strict typecheck | `npm run typecheck` (TS 6.0.3) | pass (0 errors) | terminal |
-| Lint + Hooks | `npm run lint` | pass (0 errors, 76 warnings; rules-of-hooks verified with synthetic F06 violation `react-hooks/rules-of-hooks` error) | terminal |
-| Unit/component/smoke | `npm run test` (vitest 5.0.3) | pass 21/21 | `tests/**` |
-| Build | `npm run build` | pass | `dist/` |
-| Built server start | `NODE_ENV=production GEMINI_API_KEY=audit-placeholder node dist/server.js` | **fail — F05 `Dynamic require of "path" is not supported` (expected; TASK-005 owns the fix)** | terminal 2026-10-11 |
-| CI | `.github/workflows/ci.yml` | **BLOCKED — not run** | GitHub App connection lacks the `workflows` permission: pushing workflow files is rejected (`refusing to allow a GitHub App to create or update workflow ... without workflows permission`). The workflow file is prepared at `.github/workflows/ci.yml` but cannot be pushed (or run on Actions) until the GitHub connection is reconnected with the workflows scope. Then `git push` and confirm the Actions run. |
-| Doc validation | doc-33 script (count updated to 53) | pass | terminal |
-| Media/provider/browser | ffmpeg/ffprobe, Gemini ASR/TTS, Playwright | **not run** — no FFmpeg in sandbox; no API key; no budget approval; no browser env | requires staging worker image + approved key (see below) |
+| Frozen install | `npx bun install --frozen-lockfile` | pass | bun.lock coherent |
+| npm resolution | `npm install --dry-run --ignore-scripts --no-audit --no-fund` | pass | terminal |
+| Strict typecheck | `npm run typecheck` | pass (0 errors) | terminal |
+| Lint + Hooks | `npm run lint` | pass (0 errors, 78 warnings; rules-of-hooks verified live) | terminal |
+| Tests | `npm run test` (vitest 5.0.3) | **pass 46/46** (unit 14, component 2, API smoke 6, security 18, packaging 6) | `tests/**` |
+| Build + built server | `npm run check`; packaging suite boots `node dist/server.js` | pass (F05 regression now green) | `tests/api/packaging.test.ts` |
+| Traversal/upload/read-only | `tests/api/security.test.ts` (isolated tmp cwd, no key) | pass (18) | same |
+| Doc validation | doc-33 script | pass (53 planning docs) | terminal |
+| CI | `.github/workflows/ci.yml` | **blocked** | GitHub App connection refuses workflow-file pushes (`workflows` permission missing). File is committed locally. Owner: reconnect GitHub with workflows scope → `git push origin arena/d12f01b6-manhwa` → confirm Actions run |
+| FFmpeg/media/provider/browser | — | **not run** | need staging worker with `ffmpeg`+`ffprobe`, approved `GEMINI_API_KEY`+budget, Playwright browser env |
 
-Provider/model/prompt versions: none used.
-Paid calls / measured or unknown spend: **none**.
-No secrets or private media in this record.
+Provider/model/prompt versions: none used. Paid calls / spend: **none**. No secrets or private media in this record.
 
 ## Decisions
 
-Confirmed new decisions and approver: **DEC-008 (toolchain pin)** — accepted under the owner's 2026-10-11 delegation; record at `docs/decisions/DEC-008-toolchain.md`. CI-on-public-repo noted there and in CURRENT_STATE.
-Proposals still pending: DEC-001 source rights, DEC-005 budget, DEC-002 hosting/billing, DEC-010 byte cap, DEC-003/004 provider/voice, DEC-011 auth pattern (interim allowlist option to be proposed in TASK-006), repo visibility.
-Updated docs/requirement/test IDs: TASK-004 status → complete (evidence in CURRENT_STATE); TEST-001 harness introduced (startup/static-isolation gate still open under F05/F15); F06 marked fixed in CURRENT_STATE audit-status note only (AUDIT.md itself stays historical).
+Confirmed: **DEC-008** (toolchain; record in `docs/decisions/DEC-008-toolchain.md`), accepted under owner delegation. CI-on-public-repo noted (pending visibility decision).
+Proposals still pending: DEC-001, DEC-002, DEC-005, DEC-010, DEC-003/004, DEC-011 (TASK-006 will propose a provider-agnostic owner-allowlist session as the interim identity), repo visibility.
+Updated IDs: TASK-004/005 complete (status log in `docs/15-backlog.md`); TEST-001 PASS; TEST-003/011 subsets covered by `tests/api/security.test.ts`; CHANGELOG 0.3/0.4.
 
 ## Risks and blockers
 
-- TEST-001 remains FAIL at the built-server step until TASK-005; no release gate is green yet.
-- 76 lint warnings (legacy `any`, unused vars, exhaustive-deps) are tracked debt; rules-of-hooks is the hard gate.
-- typescript-eslint cannot use TS 7 — revisit at typescript-eslint#10940 (DEC-008 trigger).
-- FFmpeg-dependent checks (TEST-013/014/015 etc.) require a worker/staging with `ffmpeg`+`ffprobe` installed; the dev sandbox has none. Media gate stays open.
-- DEC-001/005 remain the phase-0 owner blockers for TASK-002/003 and any provider spend.
-- Repository is public; no secrets are in it, but owner should decide visibility before real media/credentials enter any workflow.
+- F03 (no auth) is the top remaining exposure — the service must stay private/local until TASK-006 lands; do not deploy.
+- F04 only interim-bounded: the synchronous stitch/dub routes still allocate a full PCM buffer (≤7200 s now enforced) — never point them at day-long work; that needs the durable pipeline (TASK-020/022/028).
+- 78 lint warnings (legacy `any`/unused/exhaustive-deps) tracked debt.
+- CI cannot run until the GitHub connection has the `workflows` permission.
+- Media correctness (F11/WAV chunks, F12 render policy, mux QA) untested here — FFmpeg gates stay open.
+- DEC-001/005 remain phase-0 owner blockers for provider work.
 
 ## Recovery
 
-Reproduce: `npx bun install --frozen-lockfile && npm run check` on this commit. Roll back: `git revert` this task's commit(s); `bun.lock`/`package.json` restore to the audited state; no data migrations; no runtime state was created outside temp dirs (API smoke used and deleted `/tmp/manhwa-smoke-*`).
-
-Push state: TASK-004 main work is pushed to `arena/d12f01b6-manhwa`. The CI workflow file exists in the working tree but is **not committed/pushed** because the sandbox GitHub App lacks the `workflows` permission (push rejected). After the owner reconnects GitHub with that scope: `git add .github/workflows/ci.yml && git commit` (message in prior draft: "TASK-004: add GitHub Actions CI workflow") and `git push origin arena/d12f01b6-manhwa`, then verify the Actions run.
+Reproduce: `npx bun install --frozen-lockfile && npm run check` on this commit. Roll back: `git revert` the TASK-005 commit (then TASK-004's if needed); no data migrations; tests use and delete `/tmp/manhwa-test-*` temp dirs only. Demo media in Git untouched.
 
 ## Next session
 
-**Exactly one next task: TASK-005 — Repair/disable baseline blockers** (depends on TASK-004 ✓). Scope: F01 safe opaque resource IDs/path containment for `server.ts` file routes; F02 upload validation/quarantine (reject HTML/active content, media-validated extensions); F07 GET/HEAD `/audio-cache` strictly read-only (404 on missing; no fallback chord synthesis; synthesis only via explicit POST); honest missing-key errors and disable/false-demo isolation for `extract-transcript` + preset-dialogue import (no invented transcripts presented as real); F05/F15 server packaging (`--packages=external` or equivalent so `node dist/server.js` starts; client/server output split; backend bundle unreachable from static root). Regression tests per fix (TEST-003 subset + TEST-011 read-only + TEST-001 startup/static) including encoded-traversal read/write probes against the isolated smoke harness. Keep scope to these fixes; do not start auth (TASK-006) or persistence (TASK-007) in the same slice. Required inputs: none (no spend). Relevant documents: AUDIT.md F01–F07/F09/F10/F15, docs/18-migration-audit-map.md, docs/10-security-privacy.md, docs/13-testing-release.md.
+**Exactly one next task: TASK-006 — Owner-only auth/authorization** (depends on TASK-005 ✓). Scope (TEST-002): a server-enforced owner identity on every API, media and static route (except liveness + login), signed HttpOnly session, ownership checks on every resource access, unauthenticated/wrong-owner tests, and a minimal UI login gate. Record the interim identity choice as **DEC-011** (proposed: allowlisted owner access token → server session cookie; Firebase Auth remains the documented upgrade when DEC-002 hosting is approved). No paid services. Required inputs: none. Relevant documents: docs/10-security-privacy.md, docs/06-api-contract.md (error/ownership conventions), docs/13-testing-release.md (TEST-002), AUDIT.md F03, docs/18-migration-audit-map.md.

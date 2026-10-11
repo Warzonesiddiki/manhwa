@@ -1,5 +1,20 @@
 # Documentation changelog
 
+## 0.4 — 2026-10-11 (implementation session 2 · TASK-005)
+
+- **TASK-005 complete:** repaired audit blockers with regression tests (46/46 green).
+  - **F01** safe opaque names + resolved-path containment for every filesystem route; encoded-traversal read/write probes tested.
+  - **F02** uploads validated by container magic (mp4/mov/webm/mkv/avi), server-derived extensions, active content (HTML/SVG/polyglots) rejected and deleted; media served with `nosniff` + CSP sandbox.
+  - **F05** production server starts: `esbuild --packages=external`, client built to `dist/public`, server bundle to `dist/server.js` (TEST-001 startup gate now PASS).
+  - **F07** GET/HEAD `/audio-cache` strictly read-only (404 on missing; zero writes); placeholder-tone generator and preset-dialogue map removed from the production server; TTS/batch without credentials return 400 and produce no artifacts.
+  - **F09 (server + client honesty)** missing segment audio → 409 unless `allowPartial:true` (explicit gaps only); per-item TTS failures stay visibly failed; arcs marked `dubbed` only when every line has real audio.
+  - **F10 (demo isolation)** fabricated `extract-transcript` disabled (501); preset-dialogue import substitution and hard-coded "batch scripting" disabled; visible **Demo fixture** banner for bundled preset projects.
+  - **F12 (partial)** invalid uploaded-video references fail with 400 — sample footage is never silently substituted; render/truncation policy remains TASK-022.
+  - **F15** backend bundle and dotfile/env paths return 404 from the HTTP surface; SPA fallback limited to extension-less paths.
+  - **F04 (interim)** finite schema bounds on durations/segments/timestamps/text; full bounded streaming remains TASK-020/022/028.
+- Remaining open from the audit: F03 (auth/quotas → TASK-006/013), F08 (revision-aware caches → TASK-007/018), F11 (WAV chunk parsing → TASK-020), F13 (playback sync → TASK-025), F14 (persistence → TASK-007), F16 (arc partitions → TASK-015), plus the documented partials above.
+- Task status log added to [15-backlog.md](15-backlog.md).
+
 ## 0.3 — 2026-10-11 (implementation session 1 · TASK-004)
 
 - Owner authorized implementation ("YOLO mode") with delegated engineering/product decisions; paid services, public deployment, destructive operations and deferred products remain unauthorized. AGENTS.md phase updated accordingly.
