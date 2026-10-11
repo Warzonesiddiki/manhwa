@@ -2,9 +2,9 @@
 
 ## Phase and authority
 
-This repository is currently in **planning/documentation mode**. Do not change application code, install infrastructure, run paid jobs, or deploy unless the owner explicitly authorizes implementation. A roadmap ticket is not execution permission.
+This repository is in **authorized implementation mode** (owner authorization 2026-10-11, YOLO delegation of engineering/product decisions to the coding agent). Implement dependency-ready backlog tasks in bounded slices with tests and documentation evidence. **Still forbidden without separate explicit approval:** paid provider calls or jobs, cloud/paid infrastructure provisioning, destructive migrations/deletion, public deployment or automatic publication, and expansion into SaaS/voice cloning/panel generation. A roadmap ticket is not permission for those. Unresolved source-rights and budget questions (DEC-001/005) remain tracked blockers for paid/provider work.
 
-Read `docs/CURRENT_STATE.md`, `docs/README.md`, and the selected task's referenced specs before acting. Owner-confirmed product direction is in `docs/00-product-charter.md`; unapproved choices are in `docs/17-decisions-risks.md`. The baseline audit records current defects, not intended behavior.
+Read `docs/CURRENT_STATE.md`, `docs/README.md`, and the selected task's referenced specs before acting. Owner-confirmed product direction is in `docs/00-product-charter.md`; accepted engineering decisions are in `docs/decisions/`; unapproved product choices remain in `docs/17-decisions-risks.md`. The baseline audit records historical defects, not intended behavior — repair them with regression tests (see `docs/18-migration-audit-map.md`).
 
 ## Non-negotiable product rules
 

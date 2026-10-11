@@ -33,7 +33,7 @@ export function generateSrtContent(segments: RecapSegment[], language: 'urdu' | 
     .map((seg, idx) => {
       const start = formatSrtTimestamp(seg.start);
       const end = formatSrtTimestamp(seg.end);
-      let text = '';
+      let text: string;
       if (language === 'urdu') {
         text = seg.urduText;
       } else if (language === 'roman') {
@@ -102,7 +102,9 @@ export async function synthesizeGeminiTTS(
       audioCache.set(cacheKey, staticUrl);
       return staticUrl;
     }
-  } catch {}
+  } catch {
+    // Best-effort cache probe; synthesis below handles real failures (see TASK-005 F07).
+  }
 
   const res = await fetch('/api/gemini/tts', {
     method: 'POST',

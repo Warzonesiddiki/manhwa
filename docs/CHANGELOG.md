@@ -1,5 +1,15 @@
 # Documentation changelog
 
+## 0.3 — 2026-10-11 (implementation session 1 · TASK-004)
+
+- Owner authorized implementation ("YOLO mode") with delegated engineering/product decisions; paid services, public deployment, destructive operations and deferred products remain unauthorized. AGENTS.md phase updated accordingly.
+- **TASK-004 complete:** pinned toolchain per DEC-008 (Bun 1.4.3 + Node ≥22.12 + TypeScript ~6.0.3; esbuild ^0.28.0 aligned to Vite 8 peer range; vitest/RTL and ESLint/typescript-eslint/react-hooks stacks, pinned exactly).
+- Added real lint gate: ESLint with `react-hooks/rules-of-hooks` as error (synthetically verified) and `exhaustive-deps` as warn; 76 legacy warnings tracked. Fixed AUDIT **F06** (ExportModal hook order) with a closed→open regression test.
+- Added 21 tests across 4 suites (srtParser, urduPhonetics, ExportModal F06, API smoke in an isolated temp cwd with no credentials) — `npm run test` green; TEST-001 harness introduced, built-server startup gate remains FAIL under F05 (TASK-005).
+- Added `.github/workflows/ci.yml` (frozen install → typecheck → lint → tests → build; no secrets; public repo noted for the visibility decision).
+- New [docs/decisions/DEC-008-toolchain.md](decisions/DEC-008-toolchain.md); planning-document count in the doc-33 validator deliberately raised 52 → 53.
+- Task-status convention: verified slices are recorded in [CURRENT_STATE.md](CURRENT_STATE.md) with exact commands and results; backlog IDs stay stable.
+
 ## 0.2 — 2026-10-11
 
 - Owner expanded typical source duration to 10–24 hours; raised the design maximum to 24 hours while retaining shorter-source support and the 10-hour intermediate qualification.

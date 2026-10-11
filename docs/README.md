@@ -86,6 +86,7 @@ The product should be excellent at one job: turning your authorized long-form so
 | [33 Delivery governance](33-documentation-delivery-governance.md) | Remaining factual artifacts, change-impact rules and AI context packs |
 | [34 Onboarding/support](34-onboarding-configuration-support.md) | Configuration/readiness states and owner troubleshooting |
 | [Changelog](CHANGELOG.md) | Documentation changes |
+| [DEC-008 toolchain pin](decisions/DEC-008-toolchain.md) | Accepted: Bun/Node/TypeScript/lint/test toolchain for implementation |
 | [Feature template](templates/feature-spec.md) | Specify a new feature before coding |
 | [Task template](templates/ai-task.md) | Bound one coding-agent request |
 | [Handoff template](templates/session-handoff.md) | Preserve context across sessions |

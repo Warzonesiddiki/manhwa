@@ -71,7 +71,7 @@ import re
 
 planning = [Path('README.md'), Path('AGENTS.md'), *sorted(Path('docs').rglob('*.md'))]
 files = [*planning, Path('AUDIT.md')]
-assert len(planning) == 52
+assert len(planning) == 53  # +1 after docs/decisions/DEC-008-toolchain.md (TASK-004, 2026-10-11)
 catalogs = {}
 for prefix, name, count in [
     ('REQ', '01-requirements.md', 32),
@@ -136,7 +136,7 @@ assert math.isclose(48_000 * 2 * 2 * 24 * 3600 / 1e9, 16.5888)
 assert math.isclose(24_000 * 2 * 24 * 3600 / 1e9, 4.1472)
 assert math.isclose(128e9 * 8 / 10e6 / 3600, 28.444444444444443)
 assert 24 * 3600 / 20 / 2 / 60 == 36
-print('PASS: 52 planning documents + audit; 32 requirements, 49 tasks, 29 test families')
+print('PASS: 53 planning documents + audit; 32 requirements, 49 tasks, 29 test families')
 print('PASS: local links, inventory, JSON examples, fences, dependency DAG and release gates')
 print('PASS: selected duration, size, transfer and request-quota arithmetic')
 PY

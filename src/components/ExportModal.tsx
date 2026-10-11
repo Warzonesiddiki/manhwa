@@ -17,6 +17,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   project,
 }) => {
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
+  const [isStitching, setIsStitching] = useState(false);
+  const [isDubbingVideo, setIsDubbingVideo] = useState(false);
 
   if (!isOpen) return null;
 
@@ -54,8 +56,6 @@ ${chapters}
     triggerSuccess('Downloaded full studio project JSON!');
   };
 
-  const [isStitching, setIsStitching] = useState(false);
-
   const handleDownloadAudioTrack = async () => {
     try {
       setIsStitching(true);
@@ -77,8 +77,6 @@ ${chapters}
       setIsStitching(false);
     }
   };
-
-  const [isDubbingVideo, setIsDubbingVideo] = useState(false);
 
   const handleDownloadStudioVideo = async () => {
     try {

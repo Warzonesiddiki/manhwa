@@ -1,58 +1,64 @@
 # Current state and next session
 
-**Updated:** 2026-10-11 · **Phase:** planning/documentation only
+**Updated:** 2026-10-11 (implementation session 1) · **Phase:** authorized implementation (P1) · **Baseline revision:** `34c6875` + TASK-004 working tree
 
 ## What is actually present
 
-- Existing React/Vite/Express prototype at audited baseline `e581f0a8a21d5e93bf29479914c963da8e3638ea`.
-- Baseline audit with reproduced filesystem/upload, cache, React hook, packaging, and media defects.
-- A versioned planning library describing the target product, architecture, contracts, security, quality, roadmap, and development workflow.
-- No application fixes or new product features implemented in this planning session.
-- No cloud services deployed, live provider benchmarks performed, paid jobs started, or owner credentials collected.
+- React/Vite/TypeScript prototype (the audited code, unchanged until this session) plus the v0.2 planning library (32 REQ / 49 TASK / 29 TEST) and [AUDIT.md](../AUDIT.md) (historical; its baseline `e581f0a` is the prototype's code state).
+- **TASK-004 COMPLETE (in_review):** reproducible toolchain + initial CI/tests. See evidence below and [DEC-008](decisions/DEC-008-toolchain.md).
+- No paid provider calls, cloud infrastructure, deployments, or live provider benchmarks have run. `GEMINI_API_KEY` is not configured in the development environment.
+- Demo/preset media remains in Git as unlabeled fixtures (quarantine is TASK-005+); it has not been modified.
 
 ## Confirmed owner intent
 
-Personal channel tool; YouTube-link-first; Urdu; sources typically 10–24 hours with a 24-hour design maximum; later development in Google AI Studio. The 24-hour target supersedes the earlier 10-hour ceiling. Shorter inputs remain supported. Proposed 128 GB byte cap, technical stack, budget, model, output profile and review choices remain unapproved until explicitly accepted.
+Personal channel tool; YouTube-link-first; Urdu; sources typically 10–24 hours with a 24-hour design maximum; shorter inputs supported. Implementation authorized 2026-10-11 with decision delegation for engineering/product choices ("YOLO mode"). **Paid services, public deployment, destructive operations, and deferred products (SaaS/cloning/panels) remain unauthorized.** DEC-001 (authorized source access) and DEC-005 (budget) are still unanswered owner questions and block TASK-002/003 and any provider work. The proposed 128 GB byte cap (DEC-010) remains unapproved/unqualified.
 
-## Verified baseline versus proposed target
+## TASK-004 evidence (2026-10-11, sandbox with Node 22.22.3, npx bun 1.4.3)
 
-Baseline: TypeScript/build pass with frozen Bun resolution; built production server fails; export modal hook transition fails; unsafe path/upload and fake-audio cache behavior reproduced. See [audit](../AUDIT.md).
+| Check | Exact command | Result |
+|---|---|---|
+| Frozen install (clean tree) | `npx bun install --frozen-lockfile` | PASS |
+| npm resolution (secondary path) | `npm install --dry-run --ignore-scripts --no-audit --no-fund` | PASS (peer conflict resolved) |
+| Strict typecheck | `npm run typecheck` (`tsc --noEmit`, TS 6.0.3, `strict: true`) | PASS (0 errors) |
+| Lint + React Hooks | `npm run lint` (ESLint 10 + typescript-eslint 8.71 + react-hooks 7) | PASS (0 errors; 76 legacy warnings tracked; rules-of-hooks active — verified against a synthetic F06-style violation) |
+| Unit/component/API smoke | `npm run test` (vitest 5.0.3) | PASS — 21/21 (srtParser 8, urduPhonetics 6, ExportModal F06 regression 2, API smoke 5) |
+| Build | `npm run build` | PASS (client 357 kB / 105 kB gzip; `dist/server.js` built) |
+| Built-server startup | `NODE_ENV=production node dist/server.js` | **FAIL — F05 (`Dynamic require of "path"`); owned by TASK-005, TEST-001 gate stays open** |
+| CI workflow | `.github/workflows/ci.yml` | **NOT RUN locally** — executes on GitHub after push (public repo, no secrets) |
+| Doc validation | doc-33 structural script (updated to 53 planning docs) | PASS |
+| FFmpeg/media, live provider, browser journeys | — | **NOT RUN** — need FFmpeg worker/staging, approved key+budget, browser env |
 
-Target: authenticated private source-to-Urdu-to-video workflow with persistent revisions, resumable jobs, approved pilots, bounded costs, day-long continuity/review, valid timing and destination-checked publication parts with optional archival master. The target is **not implemented**. All TASK-001–049 entries remain **not started**.
+F06 (ExportModal hook order) is **fixed** with a component regression test; the fix is code-level only — TEST-016's broader playback/modal suite is still TASK-005/025 work.
+
+## Audit status
+
+All AUDIT.md findings remain open except **F06 (fixed + regression test in TASK-004)**. Nothing else was repaired in this slice. [docs/18-migration-audit-map.md](18-migration-audit-map.md) remains the finding→task map.
+
+## Decisions
+
+- **DEC-008 accepted:** Bun 1.4.3 + Node ≥22.12 + TypeScript ~6.0.3 (typescript-eslint cannot load TS 7; revisit at typescript-eslint#10940); vitest/RTL test stack; ESLint with rules-of-hooks error. Full record: [decisions/DEC-008-toolchain.md](decisions/DEC-008-toolchain.md).
+- CI added on the **public** GitHub repository (no secrets, no paid calls); noted for the pending repo-visibility decision.
 
 ## Current blockers
 
-1. Owner must confirm access/rights to original source files behind intended YouTube links.
-2. Monthly/per-project INR budget, project frequency, and typical source size are unknown.
-3. Cloud account/billing and worker-hosting preferences need approval.
-4. Exact ASR/TTS model, Urdu voice quality, pricing, rate limits, and output format need measured evaluation.
-5. The current security/correctness defects prevent public production use.
-6. Near-byte-cap transfer/worker capacity, multi-day provider recovery, human review coverage and 24-hour packaging must be measured; no such qualification has run.
-
-## Planning update v0.2
-
-Added docs 23–34 and six evidence templates; extended requirements to REQ-032, tasks to TASK-049 and tests to TEST-029. Updated source/API/data/jobs/roadmap/cost/owner guidance for day-long projects. TASK-030/TEST-018 retains the 10-hour intermediate gate; TASK-049/TEST-027 now qualifies the final 24-hour support claim.
-
-Current documentation checks cover links, unique IDs, task dependency acyclicity/release gate reachability, arithmetic and stale-limit searches. These are planning checks only; no new product/runtime/security tests or cloud/model calls were performed.
+1. **DEC-001** owner must confirm access/rights to original source files (RISK-01) — blocks the real pipeline (TASK-001/014+).
+2. **DEC-005** budget and **DEC-002** cloud/billing consent — block TASK-002/003 and all paid work.
+3. F01–F05, F07–F16 audit defects — TASK-005 is next and repairs the exposure/truthfulness core.
+4. No FFmpeg in the dev sandbox: media checks run only in CI/staging with FFmpeg or a worker image (exact steps in the session handoff).
+5. Day-long capacity, provider Urdu quality, and ₹/hour remain unmeasured (TASK-002/003/028/049).
 
 ## Next action
 
-**Continue planning:** resolve DEC-001/002/005 with the owner, refine scope/budget, and confirm the proposed acceptance targets.
-
-**Only after explicit implementation authorization:** use TASK-001 and the AI Studio orientation prompt. Do not jump directly to bulk generation or a full UI rebuild.
+**TASK-005 — Repair/disable baseline blockers** (F01 path containment, F02 upload validation, F07 read-only audio access, F05/F15 server packaging + static isolation, honest missing-key/demo behavior, regression tests per fix). Then TASK-006 (owner-only auth) per the roadmap. Paid/provider tasks stay blocked on DEC-001/002/005.
 
 ## Session handoff
 
-Read [planning hub](README.md), [charter](00-product-charter.md), [roadmap](14-roadmap.md), and [AI Studio playbook](16-ai-studio-playbook.md). For one task, attach only its relevant specs. Check repository revision and changed files before importing/syncing. Keep the audited baseline available for regression tests.
+See [SESSION_HANDOFF.md](../SESSION_HANDOFF.md) at the repository root (per [templates/session-handoff.md](templates/session-handoff.md)). Next session: start from that record, run `npx bun install --frozen-lockfile && npm run check` to reproduce TASK-004 evidence, then execute TASK-005 only.
 
 ## Documentation checks for this update
 
-Local relative Markdown links and required document/task/test identifiers are checked during this planning update. These are documentation checks, **not implementation test evidence**. Application source, package manifest, lockfile, and runtime configuration remain unchanged.
+Doc-33 structural validation re-run after adding [decisions/DEC-008-toolchain.md](decisions/DEC-008-toolchain.md) (planning-document count deliberately updated 52 → 53 in the doc-33 script). Historical v0.2 planning-validation text below is retained as a dated record.
 
-### Validation outcome — v0.2
+## Historical: planning update v0.2 (2026-10-11, pre-implementation)
 
-Passed documentation-only checks across **52 Markdown files** (excluding the historical audit): local links/hub inventory, balanced code fences, JSON examples, unique contiguous **32 requirement / 49 task / 29 test** definitions, task dependency acyclicity, reachability of all mandatory extension tasks from the private-release gate, and capacity arithmetic. Stale 10-hour-ceiling/30 GB-profile strings were checked; remaining 10-hour references are deliberate intermediate tests, comparison arithmetic or history. No application/runtime test was newly executed in this planning update.
-
-### Pre-merge documentation review — 2026-10-11
-
-Final review clarified revision preconditions for PATCH/PUT, expected-duration validation against each part's source-to-output map, and episode/publication-package versus optional archival-master wording. A reproducible structural/dependency/arithmetic check is included in doc 33. Documentation merge readiness is distinct from product readiness: all implementation tasks and the provider/budget/rights decisions remain pending. Merging this documentation is not authorization to deploy or a claim that the audit defects are repaired.
+Added docs 23–34 and six evidence templates; extended requirements to REQ-032, tasks to TASK-049 and tests to TEST-029. TASK-030/TEST-018 remains the 10-hour intermediate gate; TASK-049/TEST-027 is the final 24-hour qualification. Documentation checks covered links, unique IDs, task dependency acyclicity/release-gate reachability, arithmetic and stale-limit searches across 52 Markdown files — planning checks only. Pre-merge review clarified PATCH/PUT revision preconditions, expected-duration validation against each part's source-to-output map, and episode/publication-package versus archival-master wording.
