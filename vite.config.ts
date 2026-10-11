@@ -11,6 +11,12 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      // Client assets go to dist/public; the server bundle is emitted to
+      // dist/server.js and is never inside the static root (AUDIT F15).
+      outDir: 'dist/public',
+      emptyOutDir: true,
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.

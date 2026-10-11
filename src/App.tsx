@@ -14,6 +14,7 @@ import { ExportModal } from './components/ExportModal';
 import { PRESET_PROJECTS } from './data/presetProjects';
 import { MarathonProject, StoryArc, RecapSegment, GeminiVoiceName } from './types';
 import { synthesizeGeminiTTS } from './utils/audioSynthesizer';
+import { LoginGate } from './components/LoginGate';
 
 export default function App() {
   const [project, setProject] = useState<MarathonProject>(PRESET_PROJECTS[0]);
@@ -34,10 +35,30 @@ export default function App() {
   const [isChunking, setIsChunking] = useState<boolean>(false);
   const [isAdapting, setIsAdapting] = useState<boolean>(false);
   const [isBatchSynthesizing, setIsBatchSynthesizing] = useState<boolean>(false);
-  const [isBatchProcessingAll, setIsBatchProcessingAll] = useState<boolean>(false);
+  const [isBatchProcessingAll] = useState<boolean>(false);
 
   // Status banner / message
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Owner session state (TASK-006): the HttpOnly cookie carries the session,
+  // so no token is stored in JavaScript-accessible storage.
+  const [authStatus, setAuthStatus] = useState<'unknown' | 'ok' | 'login' | 'unconfigured'>('unknown');
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/session')
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 200) setAuthStatus('ok');
+        else if (res.status === 503) setAuthStatus('unconfigured');
+        else setAuthStatus('login');
+      })
+      .catch(() => {
+        if (!cancelled) setAuthStatus('login');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const showStatus = (msg: string) => {
     setStatusMessage(msg);
@@ -245,19 +266,28 @@ export default function App() {
         }
       }
 
+      const generatedCount = updatedSegments.filter((s) => s.audioGenerated).length;
+      const allGenerated = generatedCount === updatedSegments.length;
+
       setProject((prev) => ({
         ...prev,
         arcs: prev.arcs.map((a) => {
           if (a.id !== selectedArcId) return a;
           return {
             ...a,
-            status: 'dubbed',
+            // An arc is "dubbed" only when every segment has real generated
+            // audio (AUDIT F09): partial results stay visibly partial.
+            status: allGenerated ? 'dubbed' : 'scripted',
             segments: updatedSegments,
           };
         }),
       }));
 
-      showStatus(`Full voiceover render complete for ${activeArc.title}!`);
+      showStatus(
+        allGenerated
+          ? `Voiceover render complete for ${activeArc.title} (${generatedCount}/${updatedSegments.length} lines).`
+          : `Voiceover partial for ${activeArc.title}: ${generatedCount}/${updatedSegments.length} lines generated. Failed lines remain un-dubbed and can be retried.`,
+      );
     } catch (err: any) {
       console.error(err);
       showStatus('Voiceover synthesis completed with warnings.');
@@ -318,52 +348,10 @@ export default function App() {
 
   // Batch process all remaining arcs
   const handleBatchProcessAll = async () => {
-    try {
-      setIsBatchProcessingAll(true);
-      showStatus('Batch adapting remaining arcs across the marathon...');
-
-      // Mark pending arcs as scripted with auto-generated recap lines
-      setProject((prev) => ({
-        ...prev,
-        arcs: prev.arcs.map((a) => {
-          if (a.status === 'dubbed') return a;
-          const defaultSegments: RecapSegment[] = [
-            {
-              id: `seg-${a.id}-1`,
-              start: 0,
-              end: 18,
-              englishText: `Continuing into ${a.title}, Rayan faces his toughest challenge yet.`,
-              urduText: `کہانی آگے بڑھتی ہے اور ہمارے ہیرو کا سامنا اب تک کے سب سے طاقتور دشمن سے ہوتا ہے!`,
-              romanUrduText: `Kahani aage barhti hai aur humare hero ka saamna ab tak ke sab se taaqatwar dushman se hota hai!`,
-              toneDirective: 'Hero Awakening',
-              recapPacing: 'fast',
-            },
-            {
-              id: `seg-${a.id}-2`,
-              start: 18,
-              end: 38,
-              englishText: `With the entire guild watching in shock, our protagonist activates his hidden domain.`,
-              urduText: `سب کے ہوش اڑ گئے جب اس نے اپنی پوشیدہ بادشاہت کا اعلان کیا اور سائے نمودار ہوئے!`,
-              romanUrduText: `Sab ke hosh urh gaye jab usne apni posheeda baadshahat ka elaan kiya aur saaye namoodar hue!`,
-              toneDirective: 'Action Climax',
-              recapPacing: 'fast',
-            },
-          ];
-
-          return {
-            ...a,
-            status: 'scripted',
-            segments: a.segments.length > 0 ? a.segments : defaultSegments,
-          };
-        }),
-      }));
-
-      showStatus('All marathon arcs scripted! Ready for voiceover rendering.');
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsBatchProcessingAll(false);
-    }
+    // DISABLED (AUDIT F10): this previously inserted two hard-coded stock recap
+    // lines into every empty arc and reported the marathon as "scripted".
+    // Scripting must come from the source transcript (TASK-014/016).
+    showStatus('Automatic scripting of remaining arcs is not implemented: it would require real source transcription (TASK-014). No demo lines were inserted.');
   };
 
   // Ingest new project
@@ -393,6 +381,13 @@ export default function App() {
         }),
       });
 
+      if (!chunkRes.ok) {
+        // Honest failure: never substitute preset/demo arcs for a failed import.
+        const errBody = await chunkRes.json().catch(() => ({ error: 'unknown error' }));
+        showStatus(`Import failed: ${errBody.error || chunkRes.statusText}. No project was created.`);
+        return;
+      }
+
       const chunkData = await chunkRes.json();
       const generatedArcs: StoryArc[] = (chunkData.arcs || []).map((a: any, idx: number) => ({
         id: `arc-${a.arcNumber || idx + 1}`,
@@ -406,9 +401,16 @@ export default function App() {
         cliffhangerHook: a.cliffhangerHook || '',
         cliffhangerHookUrdu: a.cliffhangerHookUrdu || '',
         pacing: a.pacing || 'fast-paced',
-        status: idx === 0 ? 'scripted' : 'pending',
-        segments: idx === 0 ? PRESET_PROJECTS[0].arcs[0].segments : [],
+        status: 'pending',
+        // Imported arcs start EMPTY: dialogue must come from the actual source
+        // (transcript/adaptation), never copied from preset demo content (F10).
+        segments: [],
       }));
+
+      if (generatedArcs.length === 0) {
+        showStatus('Import failed: the server returned no arcs. No project was created.');
+        return;
+      }
 
       const newProject: MarathonProject = {
         id: `proj-${Date.now()}`,
@@ -419,13 +421,13 @@ export default function App() {
         totalDurationMinutes: data.totalDurationMinutes,
         genre: data.genre,
         mainCharacter: 'Protagonist',
-        arcs: generatedArcs.length > 0 ? generatedArcs : PRESET_PROJECTS[0].arcs,
+        arcs: generatedArcs,
       };
 
       setProject(newProject);
       setSelectedArcId(newProject.arcs[0].id);
       setIsIngestOpen(false);
-      showStatus(`Successfully imported "${data.title}" into dubbing studio!`);
+      showStatus(`Project "${data.title}" created with ${generatedArcs.length} empty arcs. Source transcription is not yet implemented (TASK-014) — no dialogue has been invented for it.`);
     } catch (err) {
       console.error(err);
       showStatus('Failed to ingest project. Please try again.');
@@ -436,9 +438,11 @@ export default function App() {
 
   const completedArcsCount = project.arcs.filter((a) => a.status === 'dubbed').length;
   const totalArcsCount = project.arcs.length;
+  const isDemoProject = PRESET_PROJECTS.some((p) => p.id === project.id);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-body selection:bg-amber-400 selection:text-slate-950">
+      <LoginGate status={authStatus} onSuccess={() => setAuthStatus('ok')} />
       {/* Top Header */}
       <Header
         onOpenIngest={() => setIsIngestOpen(true)}
@@ -448,6 +452,19 @@ export default function App() {
         completedArcsCount={completedArcsCount}
         totalArcsCount={totalArcsCount}
       />
+
+      {/* Demo fixture labeling (AUDIT F10): preset content is never presented as
+          source-derived production material. */}
+      {isDemoProject && (
+        <div className="bg-red-500/10 border-b border-red-500/30 px-6 py-2 text-xs text-red-300">
+          <span className="font-semibold uppercase tracking-wider">Demo fixture</span>
+          <span className="mx-2">—</span>
+          <span>
+            This project is bundled sample content with preset dialogue. It is NOT transcribed from
+            your source video and must not be exported as production narration.
+          </span>
+        </div>
+      )}
 
       {/* Status Alert Banner */}
       {statusMessage && (
@@ -487,11 +504,21 @@ export default function App() {
             selectedVoice={selectedVoice}
             onSelectVoice={setSelectedVoice}
             onUpdateArcSegments={(updatedSegments) => {
+              const allGenerated =
+                updatedSegments.length > 0 && updatedSegments.every((s) => s.audioGenerated);
               setProject((prev) => ({
                 ...prev,
-                arcs: prev.arcs.map((a) => (a.id === selectedArcId ? { ...a, segments: updatedSegments, status: 'dubbed' } : a)),
+                arcs: prev.arcs.map((a) =>
+                  a.id === selectedArcId
+                    ? { ...a, segments: updatedSegments, status: allGenerated ? 'dubbed' : 'scripted' }
+                    : a,
+                ),
               }));
-              showStatus('Urdu voiceover audio track generated and synchronized with video!');
+              showStatus(
+                allGenerated
+                  ? 'Urdu voiceover audio track generated and synchronized with video!'
+                  : 'Segments updated — some lines have no generated audio yet (visible as un-dubbed).',
+              );
             }}
           />
         )}

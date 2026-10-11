@@ -2,7 +2,7 @@
 
 A planned private production workspace for turning authorized English manhwa recap videos—including **10–24-hour sources**—into reviewed, natural Urdu narration and validated episode/publication-part downloads.
 
-> **Current status: planning, not production-ready.** The existing application is a prototype with confirmed security and correctness defects. This documentation describes the intended product; it does not claim those capabilities have been implemented.
+> **Current status: implementation in progress (P1), not production-ready.** The existing application began as a prototype with confirmed security and correctness defects (see [AUDIT.md](AUDIT.md)); remediation and the durable core are being implemented task by task (see [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)). This documentation describes the intended product; completed claims appear only where test evidence is recorded.
 
 ## Start here
 
@@ -20,7 +20,7 @@ A planned private production workspace for turning authorized English manhwa rec
 - YouTube-link-first project intake, with an authorized source-media path for rendering.
 - Urdu narration first; Urdu script and Roman Urdu for review.
 - Typical long-form sources: 10–24 hours; design maximum 24 hours, with shorter inputs still supported. Duration and source byte caps are separate. Smaller fixtures and the retained 10-hour test precede the final 24-hour release gate.
-- Planning and documentation now; implementation later in Google AI Studio.
+- Planning and documentation completed first (OWNER-05); implementation authorized from 2026-10-11 on this repository, with development sessions following the [AI Studio playbook](docs/16-ai-studio-playbook.md) discipline.
 
 ## Intended workflow
 

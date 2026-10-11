@@ -80,3 +80,15 @@ Acceptance passes in the relevant environment; negative paths tested; no unrelat
 ## Change control
 
 New ideas enter a feature spec, not the current task mid-session. Security corrections may interrupt the queue. Public/team/billing/voice-cloning/panel-generation work requires a new scope decision, threat review, and revised roadmap.
+
+## Status log (implementation phase)
+
+Verified slices are recorded here with evidence; table entries above stay stable as the task catalog. Full command-level evidence lives in [CURRENT_STATE.md](CURRENT_STATE.md) and the root `SESSION_HANDOFF.md`.
+
+| Task | Status | Evidence summary (2026-10-11) |
+|---|---|---|
+| `TASK-004` | complete | Toolchain pinned (DEC-008); strict typecheck, ESLint+rules-of-hooks, 21 tests, build green; F06 fixed with regression test. CI workflow prepared (push blocked on GitHub `workflows` permission). |
+| `TASK-005` | complete | F01/F02/F05/F07/F15 repaired with regression tests; F09/F10/F12 honesty repairs (server + client demo isolation); interim F04 input bounds. 46/46 tests green incl. TEST-001 built-server startup/static isolation. |
+| `TASK-006` | complete | Owner-only auth (DEC-011 interim): HMAC-signed HttpOnly session on every API/media route, login throttle, fail-closed without OWNER_TOKEN. TEST-002 suite green (56/56 tests overall). |
+| `TASK-001` | blocked (partial) | Repository clone/branch/push verified in this environment; owner decisions DEC-001/002/005 and AI Studio account checks still open. |
+| All others | not_started | — |

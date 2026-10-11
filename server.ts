@@ -26,23 +26,115 @@ if (!fs.existsSync(videosDir)) fs.mkdirSync(videosDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(dubbedVideosDir)) fs.mkdirSync(dubbedVideosDir, { recursive: true });
 
-app.use('/videos', express.static(videosDir));
-app.use('/dubbed-videos', express.static(dubbedVideosDir));
-app.use('/uploads', express.static(uploadsDir));
+// Hardened static serving for untrusted media: never sniff types, never allow
+// active content to execute on this origin (AUDIT F02). Mounted AFTER the
+// owner-auth guard (TASK-006) so private media requires a session.
+function untrustedStatic(root: string) {
+  return express.static(root, {
+    index: false,
+    dotfiles: 'deny',
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox; frame-ancestors 'none'");
+      res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    },
+  });
+}
+
+// --- Safe opaque resource names (AUDIT F01) ---------------------------------
+// Client-supplied identifiers must never contain separators or traversal
+// sequences. Server-generated names only: letters, digits, dot, underscore,
+// hyphen; first character alphanumeric; max 128 chars.
+const SAFE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+function isSafeName(name: unknown): name is string {
+  return typeof name === 'string' && SAFE_NAME_RE.test(name) && !name.includes('..');
+}
+/** Resolve `name` strictly inside `baseDir`, or null if unsafe/escaping. */
+function resolveContained(baseDir: string, name: string): string | null {
+  if (!isSafeName(name)) return null;
+  const base = path.resolve(baseDir);
+  const candidate = path.resolve(base, name);
+  if (!candidate.startsWith(base + path.sep)) return null;
+  return candidate;
+}
+
+// --- Request bounds (AUDIT F04 interim mitigation) --------------------------
+// Full bounded/streaming media work is TASK-020/022/028. Until then these
+// finite schema limits reject the pathological inputs that caused unbounded
+// synchronous allocation. 7200 s at 24 kHz mono s16 = ~345 MB per buffer —
+// high, but finite; larger work must use the durable job pipeline.
+const MAX_STITCH_SECONDS = 7200;
+const MAX_TIMELINE_SEGMENTS = 1000;
+interface TimelineSegmentInput {
+  id: string;
+  start: number;
+  end: number;
+}
+function validateTimeline(
+  segments: unknown,
+  totalDurationSeconds: unknown,
+): { ok: true; segments: TimelineSegmentInput[]; totalDurationSeconds: number } | { ok: false; error: string } {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return { ok: false, error: 'segments array is required' };
+  }
+  if (segments.length > MAX_TIMELINE_SEGMENTS) {
+    return { ok: false, error: `segments exceeds ${MAX_TIMELINE_SEGMENTS} items` };
+  }
+  const duration = totalDurationSeconds;
+  if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0 || duration > MAX_STITCH_SECONDS) {
+    return { ok: false, error: `totalDurationSeconds must be a finite number in (0, ${MAX_STITCH_SECONDS}]` };
+  }
+  const out: TimelineSegmentInput[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i] as Record<string, unknown>;
+    const id = seg?.id;
+    const start = seg?.start;
+    const end = seg?.end;
+    if (!isSafeName(id)) {
+      return { ok: false, error: `segments[${i}].id is invalid` };
+    }
+    if (
+      typeof start !== 'number' || typeof end !== 'number' ||
+      !Number.isFinite(start) || !Number.isFinite(end) ||
+      start < 0 || end < start || end > duration + 3600
+    ) {
+      return { ok: false, error: `segments[${i}] timestamps are out of range` };
+    }
+    out.push({ id, start, end });
+  }
+  return { ok: true, segments: out, totalDurationSeconds: duration };
+}
+
+// --- Upload validation (AUDIT F02) ------------------------------------------
+// Extensions are derived from sniffed container magic, never from the client.
+const VIDEO_MAGIC: Array<{ ext: string; test: (b: Buffer) => boolean }> = [
+  // ISO-BMFF (mp4/mov/m4v): 'ftyp' at byte offset 4
+  { ext: '.mp4', test: (b) => b.length >= 12 && b.subarray(4, 8).toString('latin1') === 'ftyp' },
+  // EBML (webm/mkv)
+  { ext: '.webm', test: (b) => b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3 },
+  // AVI: RIFF....AVI
+  { ext: '.avi', test: (b) => b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'AVI ' },
+];
+function sniffVideoExt(head: Buffer): string | null {
+  for (const { ext, test } of VIDEO_MAGIC) {
+    if (test(head)) return ext;
+  }
+  return null;
+}
 
 // Multer storage for user original video uploads
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, uploadsDir);
   },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.mp4';
-    cb(null, `orig_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`);
+  filename: (_req, _file, cb) => {
+    // Server-generated opaque name; real extension is appended after sniffing.
+    cb(null, `orig_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.bin`);
   },
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB interim cap; resumable large upload is TASK-009/039
 });
 
 // Initialize Google GenAI client
@@ -56,16 +148,128 @@ const ai = new GoogleGenAI({
   },
 });
 
-/**
- * Health check
- */
+// --- Owner-only authentication (AUDIT F03, TASK-006, DEC-011 interim) -------
+// Single-owner access is enforced server-side on every API and media route.
+// Identity: allowlisted OWNER_TOKEN exchanged for an HMAC-signed HttpOnly
+// session cookie. If OWNER_TOKEN is unset the server FAILS CLOSED (503) —
+// in development an ephemeral token is generated and logged instead.
+// Firebase Authentication is the documented upgrade once DEC-002 is approved.
+const SESSION_COOKIE = 'mh_session';
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12h work session
+let ownerToken: string | null = process.env.OWNER_TOKEN || null;
+if (!ownerToken) {
+  if (isProduction) {
+    console.error('OWNER_TOKEN is not set: all protected routes will fail closed (503).');
+  } else {
+    ownerToken = crypto.randomBytes(24).toString('hex');
+    console.warn(`[dev] OWNER_TOKEN not set — generated ephemeral owner token: ${ownerToken}`);
+    console.warn('[dev] Set the OWNER_TOKEN environment variable for stable sessions.');
+  }
+}
+
+function signSession(exp: number): string {
+  const payload = `v1.${exp}`;
+  const mac = crypto.createHmac('sha256', ownerToken!).update(payload).digest('hex');
+  return `${payload}.${mac}`;
+}
+function verifySession(value: string | undefined): boolean {
+  if (!ownerToken || !value) return false;
+  const parts = value.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return false;
+  const exp = Number(parts[1]);
+  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+  const expected = crypto.createHmac('sha256', ownerToken).update(`v1.${parts[1]}`).digest();
+  let given: Buffer;
+  try {
+    given = Buffer.from(parts[2], 'hex');
+  } catch {
+    return false;
+  }
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx > 0) out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return out;
+}
+// Naive per-IP login throttle (in-memory; adequate for a single-owner service).
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+function loginThrottled(ip: string): boolean {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > 10;
+}
+
+function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!ownerToken) {
+    return res.status(503).json({ error: 'Owner authentication is not configured (OWNER_TOKEN). This service fails closed.' });
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (verifySession(cookies[SESSION_COOKIE])) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Owner authentication required.' });
+}
+
+// Public liveness + session endpoints (registered before the /api guard).
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasApiKey: Boolean(apiKey),
+    hasOwnerAuth: Boolean(ownerToken),
     timestamp: new Date().toISOString(),
   });
 });
+
+app.post('/api/auth/login', (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  if (loginThrottled(ip)) {
+    return res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' });
+  }
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const expected = Buffer.from(ownerToken ?? '');
+  const given = Buffer.from(token);
+  const ok =
+    ownerToken !== null &&
+    given.length === expected.length &&
+    crypto.timingSafeEqual(given, expected);
+  if (!ok) {
+    return res.status(403).json({ error: 'Invalid owner token.' });
+  }
+  const exp = Date.now() + SESSION_TTL_MS;
+  const cookie = `${SESSION_COOKIE}=${encodeURIComponent(signSession(exp))}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${isProduction ? '; Secure' : ''}`;
+  res.setHeader('Set-Cookie', cookie);
+  return res.json({ ok: true, expiresAt: new Date(exp).toISOString() });
+});
+
+app.get('/api/auth/session', (req, res) => {
+  if (!ownerToken) {
+    return res.status(503).json({ authenticated: false, configured: false });
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  const authenticated = verifySession(cookies[SESSION_COOKIE]);
+  return res.status(authenticated ? 200 : 401).json({ authenticated, configured: true });
+});
+
+// Everything else under /api requires an authenticated owner session.
+app.use('/api', requireOwner);
+// Private media directories require the session too (REQ-001/019).
+app.use('/audio-cache', requireOwner);
+app.use('/uploads', requireOwner);
+app.use('/videos', requireOwner);
+app.use('/dubbed-videos', requireOwner);
+app.use('/videos', untrustedStatic(videosDir));
+app.use('/dubbed-videos', untrustedStatic(dubbedVideosDir));
+app.use('/uploads', untrustedStatic(uploadsDir));
 
 /**
  * Split long-form manhwa marathon into 15-30 min arcs
@@ -241,98 +445,27 @@ function getAudioCacheKey(text: string, voice = 'Zephyr') {
   return crypto.createHash('md5').update(`${voice}:${norm}`).digest('hex');
 }
 
-const PRESET_SEGMENTS: Record<string, string> = {
-  'seg-1-1': 'کہانی کی شروعات ہوتی ہے ایک خطرناک ایس رینک ڈنجن کے اندر، جہاں ہمارے مین کریکٹر ریان کو اس کی اپنی ٹیم نے دھوکہ دے کر مانسٹرز کے سامنے مرنے کے لیے چھوڑ دیا۔',
-  'seg-1-2': 'پورے پانچ سالوں سے ریان کو سب بیکار کچرا سمجھتے تھے، کیونکہ اس کے پاس پورے ملک میں سب سے کمزور ایف رینک اسٹیٹس تھا۔',
-  'seg-1-3': 'سیکڑوں خونخوار بھیڑیوں کے بیچ گھیرا ہمارا ہیرو اپنی آخری سانسیں گن رہا تھا۔ لیکن بالکل اسی لمحے، اس کی آنکھوں کے سامنے ایک سنہری سسٹم اسکرین چمک اٹھی!',
-  'seg-1-4': 'نوٹیفکیشن میں لکھا تھا: کیا تم قدیم انڈیڈ بادشاہ کا خفیہ تخت حاصل کرنا چاہتے ہو؟ ریان نے بنا ایک سیکنڈ ضائع کیے فورا چیخ کر کہا: ہاں، مجھے منظور ہے!',
-  'seg-1-5': 'اور پھر، ڈنجن کے اندر کالے جادو کا اتنا خوفناک دھماکہ ہوا کہ سارے مانسٹرز دہشت سے کانپنے لگے! ریان کی آنکھوں سے خطرناک جامنی روشنی نکلنے لگی۔',
-  'seg-1-6': 'سسٹم نے اسے پہلا حکم دیا: اٹھو! اور صرف اس ایک لفظ سے، مرے ہوئے جانوروں کی لاشیں سیاہ سائے والے سپاہی بن کر اپنے نئے بادشاہ کے آگے سر جھکانے لگیں!',
-  'seg-1-7': 'اب وہ ہنٹر، جسے سب بیکار سمجھ کر مرنے کے لیے چھوڑ آئے تھے، انسانی دنیا میں واپس لوٹنے والا ہے۔ اور اسے دھوکہ دینے والوں کو اندازہ بھی نہیں کہ انہوں نے کیسی بلا کو جگا دیا ہے!',
-};
+// Demo placeholder-tone generation and preset-dialogue maps were removed from
+// the production server in TASK-005 (AUDIT F07/F09/F10): narration artifacts
+// may only come from explicit TTS requests; tones are never presented as speech.
+// Fixture generation lives in the standalone dev script pre-cache.ts only.
 
-function generateDramaticNarrationWav(durationSec = 4): Buffer {
-  const sampleRate = 24000;
-  const numSamples = sampleRate * durationSec;
-  const buffer = Buffer.alloc(44 + numSamples * 2);
-
-  // RIFF header
-  buffer.write('RIFF', 0);
-  buffer.writeUInt32LE(36 + numSamples * 2, 4);
-  buffer.write('WAVE', 8);
-  buffer.write('fmt ', 12);
-  buffer.writeUInt32LE(16, 16);
-  buffer.writeUInt16LE(1, 20); // PCM
-  buffer.writeUInt16LE(1, 22); // Mono
-  buffer.writeUInt32LE(sampleRate, 24);
-  buffer.writeUInt32LE(sampleRate * 2, 28);
-  buffer.writeUInt16LE(2, 32);
-  buffer.writeUInt16LE(16, 34);
-  buffer.write('data', 36);
-  buffer.writeUInt32LE(numSamples * 2, 40);
-
-  // Smooth cinematic chord sweep
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    const env = Math.sin((t / durationSec) * Math.PI);
-    const s1 = Math.sin(2 * Math.PI * 146.83 * t); // D3
-    const s2 = Math.sin(2 * Math.PI * 174.61 * t) * 0.6; // F3
-    const s3 = Math.sin(2 * Math.PI * 220.00 * t) * 0.4; // A3
-    const sample = Math.floor((s1 + s2 + s3) * 0.35 * env * 32767);
-    buffer.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), 44 + i * 2);
-  }
-  return buffer;
-}
-
-// Resilient audio endpoint that serves cached or on-demand synthesized audio
-app.get('/audio-cache/:filename', async (req, res) => {
+// Read-only audio artifact access (AUDIT F07). GET and HEAD never synthesize,
+// never write, and never fall back to placeholder audio. Speech is produced
+// only through the explicit POST /api/gemini/tts job below.
+app.get('/audio-cache/:filename', (req, res) => {
   const filename = req.params.filename;
-  const filePath = path.join(audioCacheDir, filename);
-
+  const filePath = resolveContained(audioCacheDir, filename);
+  if (!filePath) {
+    return res.status(400).json({ error: 'Invalid artifact name' });
+  }
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return res.status(404).json({ error: 'Audio artifact not found' });
+  }
   res.setHeader('Content-Type', 'audio/wav');
-  res.setHeader('Accept-Ranges', 'bytes');
-
-  if (fs.existsSync(filePath)) {
-    return fs.createReadStream(filePath).pipe(res);
-  }
-
-  // File not found on disk, try resolving from segment ID or query text
-  const segId = filename.replace(/\.wav$/, '');
-  const text = (req.query.text as string) || PRESET_SEGMENTS[segId];
-
-  if (text && apiKey) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash-lite-tts',
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text, speechMetadata: { style: 'Dramatic Urdu anime recap storyteller' } }],
-          },
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
-          },
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        const buf = Buffer.from(base64Audio, 'base64');
-        fs.writeFileSync(filePath, buf);
-        return res.end(buf);
-      }
-    } catch (e: any) {
-      console.warn(`Dynamic TTS generation for ${segId} warning:`, e.message);
-    }
-  }
-
-  // Fallback to valid synthesized audio buffer so browser media element never fails
-  const fallbackBuf = generateDramaticNarrationWav(4);
-  fs.writeFileSync(filePath, fallbackBuf);
-  return res.end(fallbackBuf);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  return fs.createReadStream(filePath).pipe(res);
 });
 
 app.get('/api/cached-audio-list', (req, res) => {
@@ -358,10 +491,17 @@ app.post('/api/gemini/tts', async (req, res) => {
     const validVoices = ['Zephyr', 'Fenrir', 'Kore', 'Puck', 'Charon'];
     const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Zephyr';
 
+    if (segmentId !== undefined && !isSafeName(segmentId)) {
+      return res.status(400).json({ error: 'Invalid segmentId' });
+    }
+    if (text.length > 10000) {
+      return res.status(400).json({ error: 'text exceeds 10000 characters' });
+    }
+
     // 1. Check disk cache first!
     const cacheKey = getAudioCacheKey(text, chosenVoice);
-    const keyFile = path.join(audioCacheDir, `${cacheKey}.wav`);
-    const idFile = segmentId ? path.join(audioCacheDir, `${segmentId}.wav`) : null;
+    const keyFile = resolveContained(audioCacheDir, `${cacheKey}.wav`)!;
+    const idFile = segmentId ? resolveContained(audioCacheDir, `${segmentId}.wav`) : null;
     const resolvedUrl = `/audio-cache/${segmentId ? `${segmentId}.wav` : `${cacheKey}.wav`}`;
 
     if (idFile && fs.existsSync(idFile)) {
@@ -388,14 +528,9 @@ app.post('/api/gemini/tts', async (req, res) => {
     }
 
     if (!apiKey) {
-      const fallbackBuf = generateDramaticNarrationWav(4);
-      return res.json({
-        audioUrl: resolvedUrl,
-        audioBase64: fallbackBuf.toString('base64'),
-        mimeType: 'audio/wav',
-        voice: chosenVoice,
-        fromCache: false,
-      });
+      // Honest failure: no credentials means no speech. Never substitute a
+      // placeholder tone for narration (AUDIT F07/F09).
+      return res.status(400).json({ error: 'GEMINI_API_KEY is not configured.' });
     }
 
     // Call gemini-3.8-flash-lite-tts unary
@@ -446,7 +581,7 @@ app.post('/api/gemini/tts', async (req, res) => {
     });
   } catch (error: any) {
     console.error('Error generating TTS:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate voiceover audio' });
+    res.status(502).json({ error: 'TTS provider request failed; no audio was produced.' });
   }
 });
 
@@ -460,71 +595,89 @@ app.post('/api/gemini/batch-tts', async (req, res) => {
     if (!Array.isArray(segments) || segments.length === 0) {
       return res.status(400).json({ error: 'segments array is required' });
     }
+    if (segments.length > 1000) {
+      return res.status(400).json({ error: 'segments exceeds 1000 items; use the durable job pipeline for larger batches' });
+    }
+    if (!apiKey) {
+      // Honest missing-key failure up front: no partial fake results (AUDIT F09).
+      return res.status(400).json({ error: 'GEMINI_API_KEY is not configured.' });
+    }
 
     const validVoices = ['Zephyr', 'Fenrir', 'Kore', 'Puck', 'Charon'];
     const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Zephyr';
 
-    const results: Array<{ id: string; audioUrl: string; audioGenerated: boolean }> = [];
+    const results: Array<{ id: string; audioUrl: string | null; audioGenerated: boolean; error?: string }> = [];
 
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
+      const segId = seg.id;
+      if (!isSafeName(segId)) {
+        results.push({ id: String(segId ?? `index-${i}`), audioUrl: null, audioGenerated: false, error: 'invalid-id' });
+        continue;
+      }
       const text = seg.urduText || seg.romanUrduText;
-      if (!text) continue;
+      if (!text || typeof text !== 'string') {
+        results.push({ id: segId, audioUrl: null, audioGenerated: false, error: 'no-text' });
+        continue;
+      }
+      if (text.length > 10000) {
+        results.push({ id: segId, audioUrl: null, audioGenerated: false, error: 'text-too-long' });
+        continue;
+      }
 
       const cacheKey = getAudioCacheKey(text, chosenVoice);
-      const idFile = seg.id ? path.join(audioCacheDir, `${seg.id}.wav`) : null;
-      const keyFile = path.join(audioCacheDir, `${cacheKey}.wav`);
-      const audioUrl = `/audio-cache/${seg.id ? `${seg.id}.wav` : `${cacheKey}.wav`}`;
+      const idFile = resolveContained(audioCacheDir, `${segId}.wav`)!;
+      const keyFile = resolveContained(audioCacheDir, `${cacheKey}.wav`)!;
+      const audioUrl = `/audio-cache/${segId}.wav`;
 
-      if (idFile && fs.existsSync(idFile)) {
-        results.push({ id: seg.id, audioUrl, audioGenerated: true });
+      if (fs.existsSync(idFile)) {
+        results.push({ id: segId, audioUrl, audioGenerated: true });
         continue;
       }
       if (fs.existsSync(keyFile)) {
-        if (idFile) fs.writeFileSync(idFile, fs.readFileSync(keyFile));
-        results.push({ id: seg.id, audioUrl, audioGenerated: true });
+        fs.writeFileSync(idFile, fs.readFileSync(keyFile));
+        results.push({ id: segId, audioUrl, audioGenerated: true });
         continue;
       }
 
-      if (apiKey) {
-        try {
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash-lite-tts',
-            contents: [
-              {
-                role: 'user',
-                parts: [{ text, speechMetadata: { style: toneStyle } }],
-              },
-            ],
-            config: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: chosenVoice } },
-              },
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash-lite-tts',
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text, speechMetadata: { style: toneStyle } }],
             },
-          });
+          ],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: chosenVoice } },
+            },
+          },
+        });
 
-          const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-          if (base64Audio) {
-            const buf = Buffer.from(base64Audio, 'base64');
-            fs.writeFileSync(keyFile, buf);
-            if (idFile) fs.writeFileSync(idFile, buf);
-            results.push({ id: seg.id, audioUrl, audioGenerated: true });
-            continue;
-          }
-        } catch (err: any) {
-          console.warn(`Batch TTS item ${seg.id} warning:`, err.message);
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+          const buf = Buffer.from(base64Audio, 'base64');
+          fs.writeFileSync(keyFile, buf);
+          fs.writeFileSync(idFile, buf);
+          results.push({ id: segId, audioUrl, audioGenerated: true });
+          continue;
         }
+        results.push({ id: segId, audioUrl: null, audioGenerated: false, error: 'provider-returned-no-audio' });
+      } catch (err: any) {
+        console.warn(`Batch TTS item ${segId} warning:`, err.message);
+        // Failed or partial generation stays visibly failed (AUDIT F09).
+        results.push({ id: segId, audioUrl: null, audioGenerated: false, error: 'provider-error' });
       }
-
-      // Fallback
-      results.push({ id: seg.id, audioUrl, audioGenerated: false });
     }
 
-    res.json({ results });
+    const failed = results.filter((r) => !r.audioGenerated).length;
+    res.json({ results, complete: failed === 0, failedCount: failed });
   } catch (error: any) {
     console.error('Error in batch TTS:', error);
-    res.status(500).json({ error: error.message || 'Batch TTS synthesis failed' });
+    res.status(502).json({ error: 'Batch TTS synthesis failed; see results for per-item state.' });
   }
 });
 
@@ -533,32 +686,53 @@ app.post('/api/gemini/batch-tts', async (req, res) => {
  */
 app.post('/api/gemini/stitch-master-audio', (req, res) => {
   try {
-    const { segments = [], totalDurationSeconds = 120, arcId = 'arc-1' } = req.body;
+    const { segments = [], totalDurationSeconds = 120, arcId = 'arc-1', allowPartial = false } = req.body;
+
+    const checked = validateTimeline(segments, totalDurationSeconds);
+    if (!checked.ok) {
+      return res.status(400).json({ error: checked.error });
+    }
+    if (!isSafeName(arcId)) {
+      return res.status(400).json({ error: 'Invalid arcId' });
+    }
+    const timeline = checked.segments;
+    const duration = checked.totalDurationSeconds;
 
     const sampleRate = 24000;
     const bytesPerSample = 2; // 16-bit
-    const totalSamples = Math.ceil(totalDurationSeconds * sampleRate);
+    const totalSamples = Math.ceil(duration * sampleRate);
     const pcmDataSize = totalSamples * bytesPerSample;
 
     // Allocate silence buffer for entire arc
     const masterPcm = Buffer.alloc(pcmDataSize);
 
-    // Merge each segment
-    for (const seg of segments) {
-      const segFile = path.join(audioCacheDir, `${seg.id}.wav`);
-      if (fs.existsSync(segFile)) {
-        const segWav = fs.readFileSync(segFile);
-        if (segWav.length > 44) {
-          const segPcm = segWav.subarray(44);
-          const startSample = Math.floor((seg.start || 0) * sampleRate);
-          const startByte = startSample * bytesPerSample;
+    // Merge each segment; missing artifacts are recorded, never silently
+    // replaced with silence presented as success (AUDIT F09).
+    const missingSegments: string[] = [];
+    for (const seg of timeline) {
+      const segFile = resolveContained(audioCacheDir, `${seg.id}.wav`)!;
+      if (!fs.existsSync(segFile)) {
+        missingSegments.push(seg.id);
+        continue;
+      }
+      const segWav = fs.readFileSync(segFile);
+      if (segWav.length > 44) {
+        const segPcm = segWav.subarray(44);
+        const startSample = Math.floor((seg.start || 0) * sampleRate);
+        const startByte = startSample * bytesPerSample;
 
-          if (startByte < masterPcm.length) {
-            const copyLen = Math.min(segPcm.length, masterPcm.length - startByte);
-            segPcm.copy(masterPcm, startByte, 0, copyLen);
-          }
+        if (startByte < masterPcm.length) {
+          const copyLen = Math.min(segPcm.length, masterPcm.length - startByte);
+          segPcm.copy(masterPcm, startByte, 0, copyLen);
         }
       }
+    }
+
+    if (missingSegments.length > 0 && !allowPartial) {
+      return res.status(409).json({
+        error: 'Missing segment audio; refusing to render silence as complete narration. Generate the missing segments or pass allowPartial:true to accept explicit gaps.',
+        missingSegments,
+      });
     }
 
     // Build master WAV with RIFF header
@@ -579,17 +753,19 @@ app.post('/api/gemini/stitch-master-audio', (req, res) => {
     masterPcm.copy(masterWav, 44);
 
     const masterFilename = `master_${arcId}_${Date.now()}.wav`;
-    const masterPath = path.join(audioCacheDir, masterFilename);
+    const masterPath = resolveContained(audioCacheDir, masterFilename)!;
     fs.writeFileSync(masterPath, masterWav);
 
     res.json({
       masterAudioUrl: `/audio-cache/${masterFilename}`,
-      durationSeconds: totalDurationSeconds,
+      durationSeconds: duration,
       fileSizeBytes: masterWav.length,
+      partial: missingSegments.length > 0,
+      missingSegments,
     });
   } catch (error: any) {
     console.error('Error stitching audio:', error);
-    res.status(500).json({ error: error.message || 'Failed to stitch master audio' });
+    res.status(500).json({ error: 'Failed to stitch master audio' });
   }
 });
 
@@ -600,13 +776,46 @@ app.post('/api/upload-video', upload.single('video'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file provided' });
   }
-  res.json({
-    success: true,
-    videoUrl: `/uploads/${req.file.filename}`,
-    filename: req.file.filename,
-    originalname: req.file.originalname,
-    size: req.file.size,
-  });
+  // Validate actual media container (AUDIT F02): extension comes from sniffed
+  // magic bytes, never from the client. Non-video/active content is deleted.
+  const tmpPath = req.file.path;
+  try {
+    const fd = fs.openSync(tmpPath, 'r');
+    const head = Buffer.alloc(16);
+    fs.readSync(fd, head, 0, 16, 0);
+    fs.closeSync(fd);
+    const ext = sniffVideoExt(head);
+    if (!ext || req.file.size < 16) {
+      fs.unlinkSync(tmpPath);
+      return res.status(400).json({ error: 'Rejected: file is not a recognized video container (mp4/mov/webm/mkv/avi).' });
+    }
+    const baseName = path.basename(req.file.filename, '.bin');
+    const finalName = `${baseName}${ext}`;
+    const finalPath = resolveContained(uploadsDir, finalName)!;
+    fs.renameSync(tmpPath, finalPath);
+    res.json({
+      success: true,
+      videoUrl: `/uploads/${finalName}`,
+      filename: finalName,
+      originalname: req.file.originalname,
+      size: req.file.size,
+    });
+  } catch (err) {
+    console.error('Upload validation error:', err);
+    try { fs.unlinkSync(tmpPath); } catch { /* already removed */ }
+    return res.status(400).json({ error: 'Upload validation failed; file was discarded.' });
+  }
+});
+
+// Multer failures (e.g. size limit) must fail honestly as JSON (AUDIT F04/F02).
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ error: 'Upload exceeds the 500 MB interim limit; large resumable transfer is TASK-009/039.' });
+  }
+  if (err && err.name === 'MulterError') {
+    return res.status(400).json({ error: `Upload rejected: ${err.code}` });
+  }
+  return next(err);
 });
 
 /**
@@ -657,45 +866,71 @@ app.post('/api/dub-video-studio', async (req, res) => {
       arcId = 'arc-1',
       segments = [],
       totalDurationSeconds = 105,
+      allowPartial = false,
     } = req.body;
 
-    // 1. Resolve original video file path
-    let inputVideoPath = path.join(videosDir, 'sample-manhwa-original.mp4');
-    if (videoSource === 'uploaded' && uploadedVideoUrl) {
-      const cleanPath = uploadedVideoUrl.replace(/^\//, '');
-      const candidatePath = path.resolve(process.cwd(), cleanPath);
-      if (fs.existsSync(candidatePath)) {
-        inputVideoPath = candidatePath;
+    const checked = validateTimeline(segments, totalDurationSeconds);
+    if (!checked.ok) {
+      return res.status(400).json({ error: checked.error });
+    }
+    if (!isSafeName(arcId)) {
+      return res.status(400).json({ error: 'Invalid arcId' });
+    }
+    const timeline = checked.segments;
+    const duration = checked.totalDurationSeconds;
+
+    // 1. Resolve original video file path. Never silently substitute the
+    //    sample video for an invalid upload reference (AUDIT F12).
+    let inputVideoPath: string;
+    if (videoSource === 'sample') {
+      inputVideoPath = path.join(videosDir, 'sample-manhwa-original.mp4');
+    } else if (videoSource === 'uploaded') {
+      const uploadName = typeof uploadedVideoUrl === 'string' ? path.posix.basename(uploadedVideoUrl.replace(/^\/+/, '')) : '';
+      const candidatePath = resolveContained(uploadsDir, uploadName);
+      if (!candidatePath || !fs.existsSync(candidatePath)) {
+        return res.status(400).json({ error: 'Invalid or missing uploaded video reference; refusing to substitute sample footage.' });
       }
+      inputVideoPath = candidatePath;
+    } else {
+      return res.status(400).json({ error: "videoSource must be 'sample' or 'uploaded'" });
     }
 
     if (!fs.existsSync(inputVideoPath)) {
-      return res.status(404).json({ error: `Original video not found at ${inputVideoPath}` });
+      return res.status(404).json({ error: 'Original video not found' });
     }
 
     // 2. Stitch master continuous Urdu WAV track
     const sampleRate = 24000;
     const bytesPerSample = 2; // 16-bit
-    const duration = Math.max(totalDurationSeconds, 105);
     const totalSamples = Math.ceil(duration * sampleRate);
     const pcmDataSize = totalSamples * bytesPerSample;
     const masterPcm = Buffer.alloc(pcmDataSize);
 
-    for (const seg of segments) {
-      const segFile = path.join(audioCacheDir, `${seg.id}.wav`);
-      if (fs.existsSync(segFile)) {
-        const segWav = fs.readFileSync(segFile);
-        if (segWav.length > 44) {
-          const segPcm = segWav.subarray(44);
-          const startSample = Math.floor((seg.start || 0) * sampleRate);
-          const startByte = startSample * bytesPerSample;
+    const missingSegments: string[] = [];
+    for (const seg of timeline) {
+      const segFile = resolveContained(audioCacheDir, `${seg.id}.wav`)!;
+      if (!fs.existsSync(segFile)) {
+        missingSegments.push(seg.id);
+        continue;
+      }
+      const segWav = fs.readFileSync(segFile);
+      if (segWav.length > 44) {
+        const segPcm = segWav.subarray(44);
+        const startSample = Math.floor((seg.start || 0) * sampleRate);
+        const startByte = startSample * bytesPerSample;
 
-          if (startByte < masterPcm.length) {
-            const copyLen = Math.min(segPcm.length, masterPcm.length - startByte);
-            segPcm.copy(masterPcm, startByte, 0, copyLen);
-          }
+        if (startByte < masterPcm.length) {
+          const copyLen = Math.min(segPcm.length, masterPcm.length - startByte);
+          segPcm.copy(masterPcm, startByte, 0, copyLen);
         }
       }
+    }
+
+    if (missingSegments.length > 0 && !allowPartial) {
+      return res.status(409).json({
+        error: 'Missing segment audio; refusing to mux silence as complete narration. Generate the missing segments or pass allowPartial:true to accept explicit gaps.',
+        missingSegments,
+      });
     }
 
     // Build master WAV with RIFF header
@@ -716,25 +951,33 @@ app.post('/api/dub-video-studio', async (req, res) => {
     masterPcm.copy(masterWav, 44);
 
     const masterAudioFilename = `master_${arcId}_${Date.now()}.wav`;
-    const masterAudioPath = path.join(audioCacheDir, masterAudioFilename);
+    const masterAudioPath = resolveContained(audioCacheDir, masterAudioFilename)!;
     fs.writeFileSync(masterAudioPath, masterWav);
 
     // 3. Mux original video stream + studio Urdu audio stream via FFmpeg
     const outFilename = `dubbed_${arcId}_${Date.now()}.mp4`;
-    const outputPath = path.join(dubbedVideosDir, outFilename);
+    const outputPath = resolveContained(dubbedVideosDir, outFilename)!;
 
-    await execFilePromise('ffmpeg', [
-      '-y',
-      '-i', inputVideoPath,
-      '-i', masterAudioPath,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-map', '0:v:0',
-      '-map', '1:a:0',
-      '-shortest',
-      outputPath,
-    ]);
+    try {
+      await execFilePromise('ffmpeg', [
+        '-y',
+        '-i', inputVideoPath,
+        '-i', masterAudioPath,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        outputPath,
+      ]);
+    } catch (ffErr: any) {
+      if (ffErr && ffErr.code === 'ENOENT') {
+        return res.status(503).json({ error: 'FFmpeg is not available on this server; rendering requires a media worker (see docs/11-infrastructure-deployment.md).' });
+      }
+      console.error('FFmpeg mux failed:', ffErr);
+      return res.status(500).json({ error: 'FFmpeg mux failed; no dubbed video was produced.' });
+    }
 
     const stat = fs.statSync(outputPath);
 
@@ -745,86 +988,27 @@ app.post('/api/dub-video-studio', async (req, res) => {
       fileSizeBytes: stat.size,
       durationSeconds: duration,
       masterAudioUrl: `/audio-cache/${masterAudioFilename}`,
+      partial: missingSegments.length > 0,
+      missingSegments,
       message: 'Original video and studio Urdu voiceover successfully merged!',
     });
   } catch (err: any) {
     console.error('Error in dub-video-studio:', err);
-    res.status(500).json({ error: err.message || 'Failed to merge original video and Urdu dub' });
+    res.status(500).json({ error: 'Failed to merge original video and Urdu dub' });
   }
 });
 
 /**
- * YouTube / Video Ingest & Transcript Extractor Simulation
+ * Transcript extraction is NOT implemented. This route previously asked a model
+ * to invent a realistic sample transcript from URL/title text (AUDIT F10) and
+ * presented it as the user's source. It is disabled rather than faked: a real
+ * source-derived transcript arrives via TASK-014 (ASR) or an owner-supplied
+ * transcript file. See docs/03-youtube-rights-ingestion.md.
  */
-app.post('/api/gemini/extract-transcript', async (req, res) => {
-  try {
-    const { videoUrl, titleHint = '' } = req.body;
-
-    if (!apiKey) {
-      return res.status(400).json({ error: 'GEMINI_API_KEY is not configured.' });
-    }
-
-    const prompt = `
-You are analyzing a YouTube Manhwa Recap Video for dubbing:
-Video URL: ${videoUrl || 'https://www.youtube.com/watch?v=4zgCQqFhDxM'}
-Title Hint: ${titleHint || 'Solo Necromancer 10+ Hour Recap Marathon'}
-
-Generate a realistic, high-fidelity sample breakdown of this Manhwa recap video.
-Provide:
-1. detectedTitle: string (e.g. "I Awoke As The Necromancer Sovereign - 100 Chapter Marathon Recap")
-2. estimatedDurationSeconds: number (e.g. 28800 = 8 hours)
-3. genre: "Action Fantasy System Manhwa"
-4. mainCharacter: "Jin-Woo / Rayan"
-5. initialSampleSegments: Array of 6 to 8 timestamped segments for Arc 1 (first 2 minutes) with:
-   - id: string
-   - start: number (seconds)
-   - end: number (seconds)
-   - englishText: engaging English manhwa recap narrative line
-   - urduText: conversational Urdu spoken line
-   - romanUrduText: Roman Urdu transliteration
-   - toneDirective: "Dramatic Whisper" | "Action Clash" | "Recap Hook"
-`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            detectedTitle: { type: Type.STRING },
-            estimatedDurationSeconds: { type: Type.NUMBER },
-            genre: { type: Type.STRING },
-            mainCharacter: { type: Type.STRING },
-            initialSampleSegments: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  start: { type: Type.NUMBER },
-                  end: { type: Type.NUMBER },
-                  englishText: { type: Type.STRING },
-                  urduText: { type: Type.STRING },
-                  romanUrduText: { type: Type.STRING },
-                  toneDirective: { type: Type.STRING },
-                },
-                required: ['id', 'start', 'end', 'englishText', 'urduText', 'romanUrduText', 'toneDirective'],
-              },
-            },
-          },
-          required: ['detectedTitle', 'estimatedDurationSeconds', 'genre', 'mainCharacter', 'initialSampleSegments'],
-        },
-      },
-    });
-
-    const parsed = JSON.parse(response.text || '{}');
-    res.json(parsed);
-  } catch (error: any) {
-    console.error('Error extracting transcript:', error);
-    res.status(500).json({ error: error.message || 'Failed to extract transcript' });
-  }
+app.post('/api/gemini/extract-transcript', (_req, res) => {
+  res.status(501).json({
+    error: 'Automatic transcript extraction from a YouTube link is not implemented. Provide authorized source media (upload) or a supplied transcript; a link is not a source of renderable bytes.',
+  });
 });
 
 /**
@@ -839,15 +1023,34 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
+    // Serve ONLY the built client directory. The server bundle lives at
+    // dist/server.js and must never be reachable over HTTP (AUDIT F15).
+    const clientPath = path.resolve(process.cwd(), 'dist', 'public');
+    app.use(express.static(clientPath, { index: false, dotfiles: 'deny' }));
+    // SPA fallback for client routes only; API paths, dotfiles, and file-like
+    // paths (e.g. /server.js, /.env) must never receive HTML or backend bytes.
+    app.get('*', (req, res, _next) => {
+      const isDotfile = path.basename(req.path).startsWith('.');
+      if (
+        req.path.startsWith('/api/') ||
+        req.path.startsWith('/audio-cache/') ||
+        isDotfile ||
+        path.extname(req.path) !== ''
+      ) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      res.sendFile(path.resolve(clientPath, 'index.html'), (err) => {
+        if (err) {
+          res.status(404).json({ error: 'Client build not found. Run npm run build first.' });
+        }
+      });
     });
   }
 
-  app.listen(PORT, () => {
-    console.log(`ManhwaUrdu DubStudio server listening on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, () => {
+    const address = server.address();
+    const boundPort = typeof address === 'object' && address !== null ? address.port : PORT;
+    console.log(`ManhwaUrdu DubStudio server listening on http://0.0.0.0:${boundPort}`);
   });
 }
 
