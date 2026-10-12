@@ -16,9 +16,9 @@ Product scope, requirements, UX states, contracts, architecture alternatives, ca
 |---|---|
 | Exact provider capability, voice quality, account quotas/rates | Unmeasured; TASK-002/041 |
 | Worker memory/scratch/24-hour throughput/cost results | Unmeasured; TASK-003/028/038/049 |
-| Executable OpenAPI and runtime validators matching implementation | Design outline exists; TASK-008; no false assertion current legacy server implements `/api/v1` |
-| Database migrations/indexes and restore scripts | Design exists; TASK-007/027/043 |
-| Docker/FFmpeg codec build, CI and infrastructure-as-code | Not implemented; TASK-004/031/046 |
+| Executable OpenAPI and runtime validators matching implementation | Implemented in `server/contracts/` and served at `/api/v1/openapi.json` (TASK-008); keep contract tests synchronized |
+| Database migrations/indexes and restore scripts | Current project metadata uses an atomic JSON store; no external database or migration system is configured. Backup/archive/restore remains TASK-027/043 |
+| Docker/FFmpeg codec build, CI and infrastructure-as-code | FFmpeg integration code exists, but no worker image or infrastructure is configured; no CI workflow is tracked in this checkout. Deployment/compliance work remains TASK-031/046 |
 | Final license/privacy notices and rights clearance | Needs actual asset/provider choices and owner review; TASK-046 |
 | Signed deployment/release/quality reports | Blank templates until evidence exists; TASK-033/049 |
 | Production secrets/resource IDs/account permissions | Configured privately later; never invented in docs |

@@ -1,6 +1,6 @@
 # 16 — Google AI Studio development playbook
 
-**Status:** instructions for later development. Do not execute setup, paid calls, or implementation during the current planning phase.
+**Status:** AI Studio workflow guidance. Bounded repository implementation is authorized per AGENTS.md; account import/sync, paid calls, cloud provisioning, and deployment remain separately gated. The orientation-only prompt below is for planning sessions and does not override the active task authorization.
 
 ## What the platform supports versus what we must build
 

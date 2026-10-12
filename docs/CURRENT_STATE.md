@@ -1,17 +1,17 @@
 # Current state and next session
 
-**Updated:** 2026-10-11 (implementation sessions 1–3) · **Phase:** authorized implementation (P1) · **Branch:** `arena/d12f01b6-manhwa` (pushed: `3bd860e` TASK-004, `d55d489` docs, `63a7a3e` TASK-005; TASK-006 commit follows; CI workflow commit local-only)
+**Updated:** 2026-10-12 (TASK-010 test-harness follow-up) · **Phase:** authorized implementation (P1) · **Branch:** `arena/8e118d2c-manhwa` at `00f5052`.
 
 ## What is actually present
 
 - React/Vite/TypeScript prototype + v0.2 planning library (32 REQ / 49 TASK / 29 TEST) + historical [AUDIT.md](../AUDIT.md).
-- **TASK-004 COMPLETE:** reproducible toolchain + initial CI/tests ([DEC-008](decisions/DEC-008-toolchain.md)).
+- **TASK-004:** reproducible toolchain + regression tests ([DEC-008](decisions/DEC-008-toolchain.md)); this checkout's stale lockfile was refreshed and frozen-install verified in the latest session. CI workflow presence and full media-suite verification remain checkout/environment caveats below.
 - **TASK-005 COMPLETE:** audit blocker repairs (paths, uploads, read-only cache, built-server packaging, honest failures, demo isolation) with regression tests including TEST-001.
 - **TASK-006 COMPLETE:** owner-only auth/authorization ([DEC-011](decisions/DEC-011-auth.md), interim identity) — server-enforced sessions on every API/media route, fail-closed, TEST-002 green.
-- **TASK-007 COMPLETE:** durable project & revision persistence ([DEC-005](decisions/DEC-005-storage.md) / [docs 05](05-data-model.md) / [06](06-api-contract.md)) — server-side atomic JSON repository (`ProjectStore`) under `data/projects/`, REST endpoints under `/api/v1/projects` with optimistic concurrency (RFC 6585 `If-Match`/`expectedRevision`, 412 Precondition Failed, 428 Precondition Required, ETag negotiation), frontend autosave and conflict indicator in Header. TEST-005 suite green.
+- **TASK-007 COMPLETE (previously recorded):** durable project & revision persistence ([docs 05](05-data-model.md) / [06](06-api-contract.md)) — server-side atomic JSON repository (`ProjectStore`) under `data/projects/`, REST endpoints under `/api/v1/projects` with optimistic concurrency (RFC 6585 `If-Match`/`expectedRevision`, 412 Precondition Failed, 428 Precondition Required, ETag negotiation), frontend autosave and conflict indicator in Header. TEST-005 suite previously recorded green. DEC-005 is the separate, unresolved budget decision; no storage decision record is present in this checkout.
 - **TASK-008 COMPLETE:** executable API & domain contracts ([doc 06](06-api-contract.md)) — OpenAPI 3.1.0 specification at `/api/v1/openapi.json`, canonical error envelope (`code`, `message`, `retryable`, `requestId`, `details`), request bounds and rejection of media in JSON payloads (`LIMIT_EXCEEDED`, `UPLOAD_INVALID`), `X-Request-Id` correlation middleware. Contract test suite green.
 - **TASK-009 COMPLETE:** scoped resumable uploads & quarantined asset lifecycle ([doc 24](24-large-file-transfers.md) / [doc 06](06-api-contract.md)) — scoped sessions under projects (`POST /api/v1/projects/:id/upload-sessions`), sequential chunked streaming with strict server-confirmed offset enforcement (`Content-Range` / `UPLOAD_OFFSET_MISMATCH` 409), interrupted upload recovery (`POST .../resume`), SHA-256 integrity check (`CHECKSUM_MISMATCH` 422), container magic inspection and rejection of active/HTML/SVG disguised content (`QUARANTINE_REJECTED` 422), protected quarantined asset lifecycle (403 on unverified asset access), idempotent finalization, and HTTP Range-capable 206 delivery (`GET /api/v1/assets/:id/access`). TEST-003/004 green.
-- **TASK-010 COMPLETE:** media inspection & preview proxy ([doc 09](09-media-and-export.md) / [doc 28](28-preview-compatibility.md) / [doc 06](06-api-contract.md)) — real containerized FFprobe stream & container inspection (`server/media/inspector.ts`), parsed rational frame rates, video & audio streams, channel count, sample rate, bit rates, rotation, source SHA-256 integrity, bounded duration validation with 24-hour limit ceiling (`LIMIT_EXCEEDED` 413), safe quarantine failure on corrupted or truncated files (`MEDIA_CORRUPTED` 422), automated project `durationMs` and `totalDurationMinutes` sync, lightweight faststart browser preview MP4 proxy generation (`server/media/previewProxy.ts`), and range-capable partial content delivery (`GET /api/v1/assets/:id/preview`). **109/109 tests total across 13 test suites (TEST-003/004 green).**
+- **TASK-010 COMPLETE:** media inspection & preview proxy ([doc 09](09-media-and-export.md) / [doc 28](28-preview-compatibility.md) / [doc 06](06-api-contract.md)) — real containerized FFprobe stream & container inspection (`server/media/inspector.ts`), parsed rational frame rates, video & audio streams, channel count, sample rate, bit rates, rotation, source SHA-256 integrity, bounded duration validation with 24-hour limit ceiling (`LIMIT_EXCEEDED` 413), safe quarantine failure on corrupted or truncated files (`MEDIA_CORRUPTED` 422), automated project `durationMs` and `totalDurationMinutes` sync, lightweight faststart browser preview MP4 proxy generation (`server/media/previewProxy.ts`), and range-capable partial content delivery (`GET /api/v1/assets/:id/preview`). **109/109 tests were previously recorded green across 13 suites in an environment with FFmpeg/FFprobe.** The latest checkout run is summarized below; this sandbox lacks those binaries.
 - **DUAL INTAKE & 100% AUDIO REPLACEMENT COMPLETE:**
   - IngestModal & AutoDubbingStudio support both YouTube reference links and direct original video uploads (.mp4, .webm, .mkv, .mov) with file metadata validation and pairing.
   - Complete audio replacement implemented: original English audio is 100% replaced with spoken Urdu narration (muted during in-studio preview, completely dropped in export/mux with FFmpeg mapping `-map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 192k`).
@@ -21,7 +21,24 @@
 
 Personal channel tool; YouTube-link-first; Urdu; sources typically 10–24 hours with a 24-hour design maximum; shorter inputs supported. Implementation authorized 2026-10-11 with decision delegation ("YOLO mode"). Both YouTube reference links and uploaded video sources are supported; original English audio is completely replaced by Urdu narration. **Paid services, public deployment, destructive operations, and deferred products remain unauthorized.** DEC-001 (authorized source access) and DEC-005 (budget) remain unanswered and block TASK-002/003 and any provider work. The 128 GB byte cap (DEC-010) remains unapproved/unqualified.
 
-## Verification evidence (2026-10-11, sandbox: Node 22.23.2, bun 1.4.3 via npx, FFmpeg 4.4.2 installed, no API key)
+## Latest checkout verification (2026-10-12, Node 22.22.3 / npm 10.9.8, Bun 1.4.3 via `npx`, no FFmpeg/FFprobe, no API key)
+
+| Check | Exact command | Result |
+|---|---|---|
+| Frozen install | `npx --yes bun@1.4.3 install --frozen-lockfile` | PASS; 370 packages installed from the lockfile. |
+| npm resolution (secondary) | `npm install --dry-run --ignore-scripts --package-lock=false --no-audit --no-fund` | PASS. |
+| Typecheck | `npm run typecheck` | PASS (0 errors). |
+| Lint | `npm run lint` | PASS (0 errors; 116 existing warnings). |
+| Tests excluding FFmpeg-dependent suite | `npx vitest run --exclude tests/api/mediaInspection.test.ts` | PASS: 96/96 tests across 12 suites. |
+| Media suite (targeted) | `npx vitest run tests/api/mediaInspection.test.ts` | FAIL (environment-blocked): setup cannot spawn `ffmpeg` (`ENOENT`); Vitest reports the suite failed and 13 tests skipped. The cleanup guard now avoids the secondary `shutdownServer(undefined)` exception. |
+| Full test/check command | `npm run check` | FAIL (environment-blocked): same missing-`ffmpeg` setup failure. 12 suites / 96 tests pass, 13 media tests are skipped after setup failure; no teardown exception. The command stops before its build stage. |
+| Production build | `npm run build` | PASS; Vite/esbuild produced client and server bundles. Existing `__dirname` and ineffective-dynamic-import warnings remain. |
+| Documentation validator | Doc-33 structural/link/arithmetic script | PASS after correcting the stale `decisions/DEC-005-storage.md` link; 54 planning documents, IDs, links, dependency graph, and selected arithmetic validated. |
+| CI workflow | `git ls-tree -r --name-only HEAD .github/workflows/` | No workflow file is present in this checkout; no Actions run was possible. |
+
+No provider calls, cloud provisioning, deployment, or paid work occurred. See the follow-up handoff for the next gated action.
+
+## Previously recorded verification evidence (2026-10-11, earlier sandbox: Node 22.23.2, Bun 1.4.3 via npx, FFmpeg 4.4.2 installed, no API key)
 
 | Check | Exact command | Result |
 |---|---|---|
@@ -51,22 +68,23 @@ Personal channel tool; YouTube-link-first; Urdu; sources typically 10–24 hours
 ## Decisions
 
 - **DEC-008 accepted:** Bun 1.4.3 + Node ≥22.12 + TypeScript ~6.0.3 + vitest/RTL + ESLint/hooks ([record](decisions/DEC-008-toolchain.md)). Revisit when typescript-eslint supports TS ≥7.1.
-- CI prepared for the **public** repository (no secrets); push blocked on the GitHub `workflows` permission. Repo-visibility decision still open.
+- A CI workflow is **not present in this checkout**. An older handoff records a prepared-but-unpublished workflow; do not treat that as a current tracked file or a verified Actions run.
 
 ## Current blockers
 
 1. **DEC-001** authorized source access (RISK-01) — blocks the real pipeline (TASK-014+).
 2. **DEC-005** budget / **DEC-002** cloud consent — block TASK-002/003 and all paid work.
-3. GitHub connection needs the `workflows` permission to publish the prepared CI workflow.
-4. F08/F11/F13/F16 remain open (see map in [18-migration-audit-map.md](18-migration-audit-map.md)).
+3. TASK-011 depends on TASK-003; do not begin dispatch/worker design until TASK-003 records the approved resource/worker strategy.
+4. This sandbox lacks `ffmpeg` and `ffprobe`; the full media suite must be rerun in a tool-equipped environment. The CI workflow is absent from this checkout.
+5. F08/F11/F13/F16 remain open (see map in [18-migration-audit-map.md](18-migration-audit-map.md)).
 
 ## Next action
 
-**TASK-011 — Durable job/dispatch ledger** (depends on TASK-008 ✓, TASK-003): Atomic job + intent, idempotent acceptance, step dependencies, worker launch identity; duplicate dispatch tested. TEST-006. Note that live provider work remains blocked on DEC-001/002/005.
+The backlog lists **TASK-011 — Durable job/dispatch ledger** as the next implementation task, but its required **TASK-003** dependency is not complete and depends on unresolved source/resource/budget decisions. The next action is to unblock **TASK-001/TASK-003** with the owner; only after TASK-003 is verified should TASK-011 begin. No paid/provider/cloud action is authorized by this handoff.
 
 ## Session handoff
 
-See [SESSION_HANDOFF.md](../SESSION_HANDOFF.md). Reproduce with `npx bun install --frozen-lockfile && npm run check`.
+See [SESSION_HANDOFF.md](../SESSION_HANDOFF.md). Reproduce dependency/build checks with `npx --yes bun@1.4.3 install --frozen-lockfile` and `npm run build`; the full `npm run check` additionally requires `ffmpeg` and `ffprobe` on `PATH`.
 
 ## Historical: planning update v0.2 (2026-10-11, pre-implementation)
 

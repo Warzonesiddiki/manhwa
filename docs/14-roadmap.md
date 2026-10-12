@@ -1,6 +1,6 @@
 # 14 — Dependency-ordered development roadmap
 
-**Status:** planning only. No implementation phase has started. Effort labels are relative, not dates or delivery promises.
+**Status:** dependency-ordered execution plan; implementation is authorized and P1 is in progress. Phase exit gates remain unmet unless evidence is recorded in [CURRENT_STATE.md](CURRENT_STATE.md). Effort labels are relative, not dates or delivery promises.
 
 ## Strategy
 
@@ -35,7 +35,7 @@ Design for 24 hours from the outset, prove small complete slices, then validate 
 - P5's final qualification and P6's release are blocked on TASK-049. The 10-hour TASK-030 stays as an intermediate proof. Optional tasks 034–037 are not part of this dependency chain.
 - Upload completion before browser closure and server-job continuation after durable acceptance are different acceptance cases.
 
-## First later implementation sessions
+## Original implementation sequence (historical; consult CURRENT_STATE.md for the active next step)
 
 1. Owner approves unanswered source/budget/stack decisions; execute only TASK-001 feasibility setup.
 2. Execute TASK-002 Urdu benchmark with a small approved spend; store results, do not extrapolate blindly.

@@ -42,4 +42,4 @@ React/Vite/TypeScript frontend, Express/GenAI backend, local media caches, and F
 
 Read [AGENTS.md](AGENTS.md) before making changes. Work in small, testable tasks; keep decisions and handoffs in the repository; never substitute demo output for completed production work. No milestone is complete until its acceptance evidence exists.
 
-Documentation version: **0.2 — 2026-10-11**. Architecture, service choices, limits, and budgets are proposals unless explicitly recorded as confirmed decisions.
+Documentation version: **0.7 — 2026-10-12**. Architecture, service choices, limits, and budgets are proposals unless explicitly recorded as confirmed decisions.

@@ -1,6 +1,6 @@
 # Planning hub — build a real tool, not a larger demo
 
-**Version:** 0.2 · **Updated:** 2026-10-11 · **Phase:** planning only
+**Version:** 0.7 · **Updated:** 2026-10-12 · **Phase:** authorized implementation (P1; see [AGENTS.md](../AGENTS.md) and [CURRENT_STATE.md](CURRENT_STATE.md))
 
 ## What changed in v0.2
 
@@ -10,7 +10,7 @@ The owner clarified that videos can be **10–24 hours**, so the design maximum 
 - **Read [27 Publication packaging](27-publication-packaging.md):** 24-hour projects produce destination-valid parts; full archival master and publication-ready output are distinct.
 - **New docs 24–34:** transfer/reselection/expiry, narrative continuity, human review, preview/browser compatibility, dependency-safe retention/restore, provider resilience, telemetry, licensing, governance and onboarding.
 - **Expanded traceability:** 32 requirements, 49 tasks and 29 test families. TASK-030/TEST-018 stays the 10-hour intermediate proof; TASK-049/TEST-027 is the final 24-hour qualification, required before private release.
-- **Planning only:** all application implementation tasks remain not started; no capacity, provider, cost or legal approval is invented. See [33 Documentation governance](33-documentation-delivery-governance.md) for the evidence that can only be completed later.
+- **Implementation status:** bounded implementation tasks are underway; see the task-status log in [15 Backlog](15-backlog.md) and the latest checkout evidence in [Current state](CURRENT_STATE.md). The full media suite and CI workflow remain environment/checkout gaps. No capacity, provider, cost or legal approval is invented; see [33 Documentation governance](33-documentation-delivery-governance.md).
 
 Scope, estimates and service choices are specifications—not claims that the current prototype supports 24-hour processing.
 
@@ -35,7 +35,7 @@ The product should be excellent at one job: turning your authorized long-form so
 
 ## Confirmed versus proposed
 
-**Owner confirmed:** personal/channel use; YouTube-link-first; Urdu-first; 10–24 hour sources; documentation now and Google AI Studio development later.
+**Owner confirmed:** personal/channel use; YouTube-link-first; Urdu-first; 10–24 hour sources; Google AI Studio as the intended development workspace. Bounded repository implementation was separately authorized on 2026-10-11 per AGENTS.md; the owner's AI Studio account/import/sync path remains unverified.
 
 **Recommended, not yet approved:** Google-oriented hosted architecture, Firebase Authentication/Firestore, private Cloud Storage, Cloud Run API and media Jobs, queue-based orchestration, numerical quality/cost/retention defaults. These require the phase-0 feasibility and budget decisions. No infrastructure has been created.
 
@@ -108,6 +108,6 @@ These are living specifications, not proof of implementation. Requirements use `
 
 Contract authority: requirements define behavior; data/API/jobs define technical invariants; roadmap orders delivery; backlog lists execution units. If documents disagree, stop and record a decision rather than selecting whichever is easier to implement.
 
-Artifacts intentionally not produced yet: executable OpenAPI/schema files, migrations, CI YAML, infrastructure-as-code, Dockerfiles, real secrets, implementation test suites, final privacy/legal notices, and provider pricing sheets. Their production tasks are in the backlog; inventing them before approval would confuse design with implementation.
+Still absent or unverified in this checkout: a CI workflow, deployment/migration/infrastructure artifacts, a containerized FFmpeg worker, real secrets, provider pricing/capability evidence, and final privacy/legal notices. The executable OpenAPI/validators (TASK-008) and application regression suites already exist; the remaining planned test families do not prove provider quality or long-form capacity.
 
 Do not paste this entire library into every model request. Use the short session brief plus only the documents relevant to one task.

@@ -1,5 +1,18 @@
 # Documentation changelog
 
+## 0.7 — 2026-10-12 (TASK-010 media-test cleanup follow-up)
+
+- Made the media-inspection test server optional until setup succeeds and only shut it down when it was actually booted. A missing local `ffmpeg` now remains the single clear setup failure instead of triggering a secondary teardown `TypeError`.
+- Did not skip or mock the FFmpeg-backed checks. In this sandbox, the targeted media suite and `npm run check` still fail because `ffmpeg`/`ffprobe` are absent; 13 media tests remain unverified. Typecheck/lint and the other 96 tests pass.
+- No product behavior, provider calls, cloud provisioning, deployment, or media assets changed.
+
+## 0.6 — 2026-10-11 (Arena checkout verification · TASK-004 follow-up)
+
+- Found and corrected a stale `bun.lock` that still described the `react-example`/TypeScript 7/esbuild 0.25 dependency set instead of the current `package.json`; regenerated with Bun 1.4.3 and aligned the workspace name. No package manifest or product behavior changed.
+- Current checkout evidence: frozen install and npm dry-run pass; typecheck/lint/build pass; 96 tests outside the FFmpeg-dependent suite pass. The full test command is blocked here because `ffmpeg`/`ffprobe` are absent; 13 media tests were not reverified. The earlier 109/109 report is retained as historical evidence from an FFmpeg-equipped environment.
+- Reconciled implementation-phase/status text, the active branch reference, a broken link that mislabeled DEC-005 (budget) as a storage decision, and the TASK-003 prerequisite before TASK-011. Clarified that no CI workflow is tracked in this checkout.
+- No paid provider calls, cloud provisioning, deployment, or private media were used.
+
 ## 0.5 — 2026-10-11 (implementation session 3 · TASK-006)
 
 - **TASK-006 complete:** owner-only authentication/authorization (AUDIT F03 core, TEST-002) — 56/56 tests green.
