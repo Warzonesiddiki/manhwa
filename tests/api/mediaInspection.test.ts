@@ -29,7 +29,7 @@ import { generatePreviewProxy } from '../../server/media/previewProxy';
 
 const execFileAsync = promisify(execFile);
 
-let server: BootedServer;
+let server: BootedServer | undefined;
 let base: string;
 let cookie: string;
 let projectId: string;
@@ -99,7 +99,7 @@ beforeAll(async () => {
 }, 45000);
 
 afterAll(async () => {
-  await shutdownServer(server);
+  if (server) await shutdownServer(server);
   try {
     if (fs.existsSync(REAL_VIDEO_PATH)) fs.unlinkSync(REAL_VIDEO_PATH);
     if (fs.existsSync(CORRUPT_VIDEO_PATH)) fs.unlinkSync(CORRUPT_VIDEO_PATH);

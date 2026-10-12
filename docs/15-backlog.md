@@ -1,6 +1,6 @@
 # 15 — Implementation backlog
 
-**Status:** every task below is **NOT STARTED**. Planning documents do not mark implementation complete.
+**Status:** this is the stable task catalog, not a global status declaration. Implemented/blocked items are recorded in the status log below; tasks without an entry remain not started.
 
 One task is one reviewable capability; split further using the task template if its diff becomes broad. Effort S/M/L is comparative uncertainty, not a promised duration. All tasks include tests, documentation update, and handoff.
 
@@ -85,14 +85,14 @@ New ideas enter a feature spec, not the current task mid-session. Security corre
 
 Verified slices are recorded here with evidence; table entries above stay stable as the task catalog. Full command-level evidence lives in [CURRENT_STATE.md](CURRENT_STATE.md) and the root `SESSION_HANDOFF.md`.
 
-| Task | Status | Evidence summary (2026-10-11) |
+| Task | Status | Evidence summary (latest update: 2026-10-12) |
 |---|---|---|
-| `TASK-004` | complete | Toolchain pinned (DEC-008); strict typecheck, ESLint+rules-of-hooks, 21 tests, build green; F06 fixed with regression test. CI workflow prepared (push blocked on GitHub `workflows` permission). |
+| `TASK-004` | complete (checkout follow-up recorded) | DEC-008 toolchain and regression suites are present. The refreshed lockfile passes frozen install (370 packages installed); typecheck, lint (0 errors/116 warnings), and build pass. 96 non-media tests pass here; the FFmpeg-dependent suite remains blocked by missing binaries, and the TASK-010 cleanup guard prevents a secondary teardown error. No CI workflow file is present in this checkout; earlier CI notes are historical. |
 | `TASK-005` | complete | F01/F02/F05/F07/F15 repaired with regression tests; F09/F10/F12 honesty repairs (server + client demo isolation); interim F04 input bounds. 46/46 tests green incl. TEST-001 built-server startup/static isolation. |
 | `TASK-006` | complete | Owner-only auth (DEC-011 interim): HMAC-signed HttpOnly session on every API/media route, login throttle, fail-closed without OWNER_TOKEN. TEST-002 suite green (56/56 tests overall). |
-| `TASK-007` | complete | Project & revision persistence (DEC-005/docs 05/06): atomic JSON store under `data/projects/`, REST CRUD under `/api/v1/projects`, RFC 6585 optimistic concurrency (If-Match/expectedRevision, 412/428, ETags), frontend autosave + conflict indicator in Header. TEST-005 green (76/76 tests overall). |
+| `TASK-007` | complete | Project & revision persistence (docs 05/06): atomic JSON store under `data/projects/`, REST CRUD under `/api/v1/projects`, RFC 6585 optimistic concurrency (If-Match/expectedRevision, 412/428, ETags), frontend autosave + conflict indicator in Header. TEST-005 was previously recorded green (76/76 overall). DEC-005 is the separate budget decision; a storage DEC-005 record is not present in this checkout. |
 | `TASK-008` | complete | Executable API & domain contracts (doc 06): OpenAPI 3.1.0 spec at `/api/v1/openapi.json`, canonical error envelope, request bounds and media rejection in JSON (`LIMIT_EXCEEDED`, `UPLOAD_INVALID`), X-Request-Id correlation. Contract suite green (83/83 tests overall). |
 | `TASK-009` | complete | Scoped resumable uploads & quarantined asset lifecycle (docs 06/24): scoped upload sessions, sequential chunks with offset validation (`UPLOAD_OFFSET_MISMATCH` 409), resume recovery, SHA-256 verification, magic sniff + quarantine protection (`QUARANTINE_REJECTED` 422/403), HTTP Range 206 delivery. TEST-003/004 green (96/96 tests overall). |
-| `TASK-010` | complete | Media inspection & preview proxy (docs 06/09/28): real containerized FFprobe streams and rational frame rate inspection (`server/media/inspector.ts`), duration bounds and 24-hour ceiling (`LIMIT_EXCEEDED` 413), fail-safe corrupted container rejection (`MEDIA_CORRUPTED` 422), project duration sync, faststart preview proxy generation (`server/media/previewProxy.ts`), and Range 206 preview delivery. 109/109 tests green across 13 test suites. |
-| `TASK-001` | blocked (partial) | Repository clone/branch/push verified in this environment; owner decisions DEC-001/002/005 and AI Studio account checks still open. |
+| `TASK-010` | complete (previously verified; test-harness follow-up) | Media inspection & preview proxy (docs 06/09/28): real FFprobe streams and rational frame-rate inspection, duration bounds, corrupt-container rejection, project duration sync, faststart proxy, and Range 206 delivery. 109/109 tests were previously recorded green with FFmpeg/FFprobe. This sandbox lacks those binaries; the latest targeted test confirms the expected `ffmpeg` prerequisite failure, and cleanup no longer throws a secondary error. |
+| `TASK-001` | blocked (partial) | Current branch/repository verified; owner decisions DEC-001/002/005 and AI Studio account checks remain open. Resolve source rights and resource/budget consent before TASK-003; TASK-011 depends on TASK-003. |
 | All others | not_started | — |

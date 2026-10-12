@@ -43,10 +43,10 @@ source). Test stack: `vitest@5.0.3` + `jsdom@30.1.2` + `@testing-library/react@1
 
 ## Consequences
 
-- CI (`.github/workflows/ci.yml`) runs frozen Bun install → strict typecheck → ESLint/hooks
-  → vitest suites → build on every push/PR of the **public** repository; the workflow holds
-  no secrets and makes no paid calls. If the repository is made private, GitHub Actions
-  minutes start counting against the account quota.
+- The intended CI contract is frozen Bun install → strict typecheck → ESLint/hooks → vitest
+  suites → build, with no secrets or paid provider calls. **No `.github/workflows/ci.yml` is
+  tracked in the current checkout**, so there is no verified Actions run. If CI is restored and
+  the repository is private, GitHub Actions minutes may count against the account quota.
 - `tsc` speed will lag TS 7 until the toolchain is re-spiked; acceptable at current scale.
 - npm users can install again (peer conflict resolved) but `package-lock.json` is not
   maintained; do not treat npm results as release evidence.
@@ -57,8 +57,9 @@ source). Test stack: `vitest@5.0.3` + `jsdom@30.1.2` + `@testing-library/react@1
 
 Revisit when **typescript-eslint supports TypeScript >= 7.1**
 (github.com/typescript-eslint/typescript-eslint/issues/10940) or when Vite changes its
-esbuild peer range. Validation evidence: TASK-004 session checks (see docs/CURRENT_STATE.md
-and SESSION_HANDOFF.md), frozen install on a clean tree, and CI runs after push.
+esbuild peer range. Validation evidence: TASK-004 session checks and the current checkout
+verification in docs/CURRENT_STATE.md / SESSION_HANDOFF.md. Frozen install passed after
+refreshing the stale lockfile; CI evidence remains pending until a workflow is tracked and run.
 
 ## Affected documents/tasks/tests
 

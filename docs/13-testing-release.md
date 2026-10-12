@@ -1,10 +1,10 @@
 # 13 — Test strategy and release gates
 
-**Status:** planned tests, not a passing suite. The audit contains the only baseline executed results.
+**Status:** release strategy and full test catalog. Regression/unit/API suites exist; current pass/block results are recorded in [CURRENT_STATE.md](CURRENT_STATE.md). The long-form, live-provider and release gates remain unqualified.
 
 ## Test layers and suggested tools
 
-Unit/property tests for schemas, time conversions, coverage, cache fingerprints, and cost accounting; API integration tests against isolated storage/database adapters; React component/keyboard tests; Playwright-style browser journeys; containerized FFmpeg fixtures; live-provider benchmark runs behind explicit budget approval. Choose compatible tools and pinned versions during TASK-004 rather than installing a large stack blindly.
+The repository uses Vitest, React Testing Library, TypeScript, and ESLint from the TASK-004 toolchain. Existing suites cover selected unit, component, auth, contract, persistence, upload, packaging, and media paths. FFmpeg/FFprobe integration fixtures require those binaries on `PATH`; this sandbox currently lacks them. Property/scale/recovery/browser qualification and live-provider benchmarks remain planned; provider calls require explicit budget approval.
 
 ## Test catalog and traceability
 

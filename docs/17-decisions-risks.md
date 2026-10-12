@@ -10,7 +10,7 @@
 | OWNER-02 | YouTube-link-first intake | Owner selected YouTube workflow |
 | OWNER-03 | Urdu at launch | Owner selected Urdu-first |
 | OWNER-04 | Sources may be 10–24 hours; 24-hour design target | Owner explicitly expanded source duration in the follow-up planning request; supersedes the earlier 10-hour target |
-| OWNER-05 | Planning/docs now, development later in Google AI Studio | Explicit request |
+| OWNER-05 | Documentation-first direction and Google AI Studio as intended workspace; bounded repository implementation was separately authorized on 2026-10-11 per AGENTS.md | Owner request plus the later implementation authorization |
 
 ## Proposed technical/product decisions
 

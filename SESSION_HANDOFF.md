@@ -1,8 +1,74 @@
-# Session handoff — 2026-10-11 · TASK-004 + TASK-005 + TASK-006 (implementation sessions 1–3)
+# Session handoff — 2026-10-12 · TASK-010 media-test cleanup follow-up
+
+## Current session context
+
+Repository/revision: `Warzonesiddiki/manhwa`, branch `arena/8e118d2c-manhwa`, HEAD `00f5052` (uncommitted working tree).
+Scope: prevent a secondary media-test teardown error when setup fails, without mocking/skipping FFmpeg-dependent checks. No product behavior, provider calls, infrastructure, deployment, or media assets changed.
+
+## Work performed
+
+- In `tests/api/mediaInspection.test.ts`, allow the test server to remain undefined until setup completes and call `shutdownServer` only when booted. Missing `ffmpeg` remains a hard suite failure.
+- Updated current-state, backlog, changelog, and session-handoff evidence. The historical 109/109 media-suite result remains historical, not verified in this checkout.
+
+## Evidence
+
+| Check | Exact command | Result |
+|---|---|---|
+| Frozen install | `npx --yes bun@1.4.3 install --frozen-lockfile` | PASS; 370 packages installed from the frozen lockfile. |
+| Typecheck | `npm run typecheck` | PASS (0 errors). |
+| Lint | `npm run lint` | PASS (0 errors; 116 existing warnings). |
+| Non-media tests | `npx vitest run --exclude tests/api/mediaInspection.test.ts` | PASS: 96/96 across 12 suites. |
+| Media suite (targeted) | `npx vitest run tests/api/mediaInspection.test.ts` | FAIL/BLOCKED: `spawn ffmpeg ENOENT`; Vitest reports 13 skipped because suite setup failed. No secondary teardown exception appears. No media case is counted as verified. |
+| Full check | `npm run check` | FAIL/BLOCKED at the same missing-`ffmpeg` setup; 12 suites/96 tests pass and 13 media tests are skipped after setup failure. It stops before the build stage; no teardown exception. |
+| Build | `npm run build` | PASS; client/server bundles produced with existing Vite/dynamic-import warnings. |
+| Docs validation and diff hygiene | Doc-33 structural validator; `git diff --check` | PASS after this handoff update. |
+
+Provider/model/prompt versions: none. Paid calls/spend: none. No secrets or private media used.
+
+## Risks and next session
+
+- Keep TASK-011 blocked: TASK-003 is unverified and owner source/resource/budget decisions remain open (DEC-001/002/005). Do not bypass those gates or make provider/cloud calls.
+- Rerun the media suite in an environment with `ffmpeg` and `ffprobe` on `PATH`; the current failure is intentional visibility of missing tooling, not a test skip policy.
+- No tracked CI workflow exists in this checkout.
+
+## Previous session handoff — 2026-10-11 · TASK-004 verification follow-up
+
+## Current session context
+
+Repository/revision: `Warzonesiddiki/manhwa`, branch `arena/8e118d2c-manhwa`, HEAD `00f5052`.
+Scope: correct the stale Bun lockfile, verify this checkout, and reconcile directly conflicting implementation-status/handoff notes. No product behavior, provider calls, infrastructure, deployment, or secrets changed.
+
+## Work performed
+
+- Regenerated `bun.lock` using Bun 1.4.3 to match `package.json` (including the current lint/test stack and esbuild/TypeScript ranges); corrected the stale workspace name. `package.json` was unchanged.
+- Updated status/handoff docs to describe this branch, distinguish historical test evidence from current checks, correct the missing DEC-005 storage link, and keep TASK-011 gated on TASK-003.
+- No FFmpeg binary was available in this sandbox, so media integration tests could not be rerun. No CI workflow file exists in the tracked checkout.
+
+## Evidence
+
+| Check | Exact command | Result |
+|---|---|---|
+| Frozen install | `npx --yes bun@1.4.3 install --frozen-lockfile` | PASS; 386 installs checked, no changes. |
+| npm resolution | `npm install --dry-run --ignore-scripts --package-lock=false --no-audit --no-fund` | PASS. |
+| Typecheck and lint | `npm run check` (first two stages) | PASS: 0 errors; ESLint reports 116 existing warnings. The compound command later fails in the FFmpeg-dependent test suite. |
+| Non-media tests | `npx vitest run --exclude tests/api/mediaInspection.test.ts` | PASS: 96/96 across 12 suites. |
+| Full suite | `npm run check` | FAIL/BLOCKED: `spawn ffmpeg ENOENT` in `tests/api/mediaInspection.test.ts`; teardown then also errors because setup never created the server. 13 media tests not verified here. |
+| Build | `npm run build` | PASS; client and server bundles produced, with existing Vite/dynamic-import warnings. |
+| Documentation validation | Doc-33 structural/link/arithmetic script | PASS after correcting the stale DEC-005 storage link; 54 planning documents, IDs, links, dependency graph, and selected arithmetic validated. |
+
+Provider/model/prompt versions: none. Paid calls/spend: none. No private media or credentials used.
+
+## Risks and next session
+
+- TASK-011 is not ready: backlog dependency TASK-003 is not verified; source, cloud/resource and budget decisions remain open. Next action is to unblock TASK-001 with owner inputs, then perform TASK-003 only with approved resources. Do not bypass those gates.
+- Full media-suite validation needs `ffmpeg` and `ffprobe` on `PATH`; the current checkout also lacks a tracked CI workflow.
+- Reproduce the lock validation with `npx --yes bun@1.4.3 install --frozen-lockfile`. Reproduce a complete `npm run check` only in an environment with FFmpeg/FFprobe.
+
+## Historical handoff from implementation sessions 1–3
 
 ## Context
 
-Repository/revision: `Warzonesiddiki/manhwa`, branch `arena/d12f01b6-manhwa`, base `34c6875` (prototype = audited `e581f0a`).
+Historical source session: `Warzonesiddiki/manhwa`, prior branch `arena/d12f01b6-manhwa`, base `34c6875` (prototype = audited `e581f0a`). This is retained for provenance only; the active branch is stated at the top of this handoff.
 Current phase: authorized implementation (P1). Owner authorized implementation 2026-10-11 with YOLO delegation of engineering/product decisions; paid services, cloud provisioning, destructive operations, public deployment and deferred products remain unauthorized.
 Task IDs and authorization scope: **TASK-004, TASK-005 and TASK-006 executed and complete.** DEC-001 (source rights) and DEC-005 (budget) still unanswered.
 
@@ -33,7 +99,7 @@ Things deliberately not changed: revision/persistence layer (TASK-007), WAV chun
 | Security regressions | `tests/api/security.test.ts` | pass (18) | same |
 | Auth regressions (TEST-002) | `tests/api/auth.test.ts` | pass (11) | same |
 | Doc validation | doc-33 script (54 planning docs) | pass | terminal |
-| CI | `.github/workflows/ci.yml` | **blocked** | GitHub App connection lacks the `workflows` permission for pushing workflow files; file committed locally. Owner: reconnect GitHub with workflows scope → `git push origin arena/d12f01b6-manhwa` → confirm Actions run |
+| CI | `.github/workflows/ci.yml` | **not present in the active checkout** | This older handoff recorded a prepared workflow and a GitHub `workflows` permission issue. The file is not tracked on the current branch; no push or Actions run was attempted in this session. |
 | FFmpeg/media/provider/browser | — | **not run** | need staging worker with `ffmpeg`+`ffprobe`, approved `GEMINI_API_KEY`+budget, Playwright browser env |
 
 Provider/model/prompt versions: none used. Paid calls / spend: **none**. No secrets or private media in this record (test token `TEST_OWNER_TOKEN` is a fixture value used only in tests).
@@ -71,10 +137,8 @@ Updated IDs: TASK-004/005/006 complete (status log in `docs/15-backlog.md`); TES
     - OpenAPI 3.1.0 schemas and paths updated.
   - **Tests:** **109/109 tests pass across 13 test suites** (mediaInspection 13, resumableUploads/TEST-003/004 13, contracts 7, persistence/TEST-005 11, AutoDubbingStudio 4, srtParser 8, urduPhonetics 6, ExportModal 4, IngestModal 3, API smoke 6, security/honesty 18, packaging/TEST-001 6, auth/TEST-002 11).
 
-## Current status
+## Status and next task recorded in the prior handoff (historical)
 
-TASK-004, TASK-005, TASK-006, TASK-007, TASK-008, TASK-009, and TASK-010 are complete and verified green.
+The earlier handoff reported TASK-004 through TASK-010 complete. The active checkout verification and dependency gate are recorded at the top of this file.
 
-## Next task
-
-**TASK-011 — Durable job/dispatch ledger** (depends on TASK-008 ✓, TASK-003): Atomic job + intent, idempotent acceptance, step dependencies, worker launch identity; duplicate dispatch tested. TEST-006. Note that live provider work remains blocked on DEC-001/002/005.
+The prior note named TASK-011 next, but TASK-011 depends on TASK-003. Current-state instructions correctly defer it until TASK-003 and its owner/resource approvals are verified.
